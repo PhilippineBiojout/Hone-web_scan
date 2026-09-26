@@ -1,0 +1,593 @@
+/* ---------- Thème ---------- */
+/* Toutes les couleurs passent par ces tokens : un futur mode sombre
+   n'aura qu'à redéfinir ce bloc sous [data-theme="dark"]. */
+:root {
+  --bg: #f6f6f8;
+  --surface: #ffffff;
+  --surface-2: #efeff3;
+  --border: #e4e4ea;
+  --text: #16161a;
+  --text-muted: #6b6b76;
+  --accent: #646cff;
+  --accent-hover: #535bf2;
+  --accent-soft: rgba(100, 108, 255, 0.10);
+  --ink: #2b2b33;
+  --success: #22c55e;
+  --danger: #ef4444;
+  --danger-soft: rgba(239, 68, 68, 0.10);
+  --success-soft: rgba(34, 197, 94, 0.12);
+  --warning: #f59e0b;
+  --warning-soft: rgba(245, 158, 11, 0.12);
+  --shadow: 0 1px 2px rgba(22, 22, 26, 0.04), 0 8px 24px rgba(22, 22, 26, 0.06);
+  --shadow-accent: 0 6px 20px rgba(100, 108, 255, 0.35);
+
+  --radius: 16px;
+  --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+
+  color-scheme: light;
+}
+
+/* ---------- Base ---------- */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+/* Sans ça, le display:flex des écrans l'emporterait sur l'attribut hidden */
+[hidden] { display: none !important; }
+
+body {
+  min-height: 100dvh;
+  background:
+    radial-gradient(120% 60% at 50% -10%, var(--accent-soft), transparent 60%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* ---------- Écran ---------- */
+.screen {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  min-height: 100dvh;
+  max-width: 440px;
+  margin: 0 auto;
+  padding:
+    calc(16px + env(safe-area-inset-top))
+    20px
+    calc(20px + env(safe-area-inset-bottom));
+}
+
+/* ---------- Barre du haut ---------- */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 6px 0 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+}
+
+.brand:active .brand__mark { transform: scale(0.9); }
+.brand__mark { transition: transform 0.15s; }
+
+.brand:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.brand__mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), #9aa0ff);
+  box-shadow: var(--shadow-accent);
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.status__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.18);
+}
+
+.status.is-offline .status__dot {
+  background: var(--danger);
+  box-shadow: 0 0 0 3px var(--danger-soft);
+}
+
+/* ---------- Hero ---------- */
+.hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  margin-top: 8px;
+}
+
+.title {
+  font-size: clamp(26px, 7vw, 32px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.03em;
+  margin-top: 12px;
+}
+
+.lead {
+  max-width: 34ch;
+  color: var(--text-muted);
+}
+
+/* ---------- Illustration viseur ---------- */
+.scanner {
+  position: relative;
+  width: 180px;
+  height: 210px;
+  display: grid;
+  place-items: center;
+}
+
+.scanner__paper {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 132px;
+  height: 164px;
+  padding: 22px 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  transform: rotate(-4deg);
+}
+
+.ink {
+  display: block;
+  width: var(--w);
+  height: 4px;
+  border-radius: 4px;
+  background: var(--ink);
+  opacity: 0.8;
+}
+
+.corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--accent);
+}
+.corner--tl { top: 0;    left: 0;  border-right: 0; border-bottom: 0; border-top-left-radius: 12px; }
+.corner--tr { top: 0;    right: 0; border-left: 0;  border-bottom: 0; border-top-right-radius: 12px; }
+.corner--bl { bottom: 0; left: 0;  border-right: 0; border-top: 0;    border-bottom-left-radius: 12px; }
+.corner--br { bottom: 0; right: 0; border-left: 0;  border-top: 0;    border-bottom-right-radius: 12px; }
+
+.scanner__beam {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 12px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px 2px rgba(100, 108, 255, 0.55);
+  animation: sweep 2.6s ease-in-out infinite alternate;
+}
+
+@keyframes sweep {
+  to { transform: translateY(184px); }
+}
+
+/* ---------- Avantages ---------- */
+.perks {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.perk {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.perk__icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.perk__icon svg { width: 18px; height: 18px; }
+
+.perk strong {
+  display: block;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.perk span {
+  display: block;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+/* ---------- Actions ---------- */
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: auto; /* colle les boutons en bas, à portée de pouce */
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 56px;
+  padding: 0 20px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.1s;
+}
+
+.btn:active { transform: scale(0.98); }
+
+.btn:disabled {
+  opacity: 0.45;
+  box-shadow: none;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.btn--primary {
+  background: var(--accent);
+  color: #fff;
+  box-shadow: var(--shadow-accent);
+}
+
+.btn--primary:hover { background: var(--accent-hover); }
+
+.btn--ghost {
+  min-height: 52px;
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.btn--ghost:hover { background: var(--surface-2); }
+
+.fineprint {
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* ---------- État « photo choisie » ---------- */
+/* Le JS n'a qu'à ajouter .has-photo sur l'écran d'accueil */
+.screen:not(.has-photo) .when-photo,
+.screen.has-photo .when-empty { display: none !important; }
+
+.scanner__photo { display: none; }
+
+.has-photo .scanner {
+  width: min(100%, 340px);
+  height: auto;
+  padding: 14px;
+}
+
+.has-photo .scanner__paper,
+.has-photo .scanner__beam { display: none; }
+
+.has-photo .scanner__photo {
+  display: block;
+  width: 100%;
+  max-height: 48dvh;
+  object-fit: contain;
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  animation: pop-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Les coins se resserrent sur la photo, comme une mise au point */
+.has-photo .corner { animation: focus-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.has-photo .corner--tl { --from: -10px, -10px; }
+.has-photo .corner--tr { --from: 10px, -10px; }
+.has-photo .corner--bl { --from: -10px, 10px; }
+.has-photo .corner--br { --from: 10px, 10px; }
+
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.94); filter: blur(6px); }
+}
+
+@keyframes focus-in {
+  from { opacity: 0; transform: translate(var(--from)); }
+}
+
+/* ---------- État « caméra ouverte » ---------- */
+/* Le JS ajoute .has-camera sur l'écran d'accueil */
+.screen:not(.has-camera) .when-camera,
+.screen.has-camera .when-empty { display: none !important; }
+
+.scanner__video { display: none; }
+
+.has-camera .scanner {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 3 / 4;
+  max-height: 58dvh;
+  border-radius: 24px;
+  overflow: hidden;
+  background: #0b0b0f;
+  box-shadow: 0 20px 50px rgba(22, 22, 26, 0.18);
+  animation: pop-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.has-camera .scanner__paper { display: none; }
+
+.has-camera .scanner__video {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Les coins et le faisceau passent par-dessus la vidéo */
+.has-camera .corner {
+  z-index: 1;
+  border-color: rgba(255, 255, 255, 0.9);
+  animation: focus-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) 0.1s both;
+}
+.has-camera .corner--tl { top: 18px;    left: 18px;  --from: -10px, -10px; }
+.has-camera .corner--tr { top: 18px;    right: 18px; --from: 10px, -10px; }
+.has-camera .corner--bl { bottom: 18px; left: 18px;  --from: -10px, 10px; }
+.has-camera .corner--br { bottom: 18px; right: 18px; --from: 10px, 10px; }
+
+.has-camera .scanner__beam {
+  z-index: 1;
+  left: 24px;
+  right: 24px;
+  animation: sweep-full 2.8s ease-in-out infinite alternate;
+}
+
+@keyframes sweep-full {
+  from { top: 24px; }
+  to   { top: calc(100% - 26px); }
+}
+
+/* Pastille « En direct » en haut, en verre dépoli */
+.scanner__live {
+  position: absolute;
+  top: 28px;
+  left: 50%;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  transform: translateX(-50%);
+}
+
+.scanner__live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #ff4d4d;
+  animation: blink 1.4s ease-in-out infinite;
+}
+
+@keyframes blink {
+  50% { opacity: 0.3; }
+}
+
+/* Deux boutons côte à côte sous le déclencheur */
+.actions__row {
+  display: flex;
+  gap: 10px;
+}
+
+.actions__row .btn { flex: 1; }
+
+/* Déclencheur rond, façon appareil photo */
+.shutter {
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  padding: 5px;
+  border: 4px solid var(--accent);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.shutter__core {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: var(--shadow-accent);
+  transition: transform 0.15s, background-color 0.15s;
+}
+
+.shutter:hover .shutter__core { background: var(--accent-hover); }
+.shutter:active .shutter__core { transform: scale(0.86); }
+
+.shutter:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+
+/* ---------- Écran d'erreur ---------- */
+.screen--center { justify-content: center; }
+
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  margin-top: auto;
+}
+
+.error__icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  margin-bottom: 8px;
+  border-radius: 50%;
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.error__icon svg { width: 32px; height: 32px; }
+
+/* ---------- Écrans « Envoyé » et « Lien expiré » ---------- */
+/* Même mise en page que l'erreur, seule la pastille change de couleur */
+.error__icon--success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.error__icon--warning {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+/* La pastille apparaît avec un rebond, puis la coche se dessine */
+#screen-sent:not([hidden]) .error__icon {
+  animation: badge-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.15s both;
+}
+
+.check {
+  stroke-width: 2.5;
+  stroke-dasharray: 22;
+  stroke-dashoffset: 22;
+}
+
+#screen-sent:not([hidden]) .check {
+  animation: draw-check 0.4s ease-out 0.5s forwards;
+}
+
+@keyframes badge-pop {
+  from { opacity: 0; transform: scale(0.5); }
+}
+
+@keyframes draw-check {
+  to { stroke-dashoffset: 0; }
+}
+
+/* ---------- Transition entre écrans (View Transitions API) ---------- */
+/* Chaque écran visible porte ce nom : le navigateur anime l'ancien
+   qui s'en va et le nouveau qui arrive. Le fond ne bouge pas. */
+.screen { view-transition-name: screen; }
+
+::view-transition-old(screen) {
+  animation: screen-out 0.22s ease-in both;
+}
+
+::view-transition-new(screen) {
+  animation: screen-in 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) 0.08s both;
+}
+
+@keyframes screen-out {
+  to { opacity: 0; transform: translateY(-12px) scale(0.98); filter: blur(4px); }
+}
+
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(20px) scale(0.98); filter: blur(4px); }
+}
+
+/* ---------- Accessibilité ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .scanner__beam { animation: none; top: 50%; }
+  .btn { transition: none; }
+  .has-photo .scanner__photo,
+  .has-photo .corner,
+  .has-camera .scanner,
+  .has-camera .corner,
+  .has-camera .scanner__beam,
+  .scanner__live::before { animation: none; }
+  .has-camera .scanner__beam { top: 50%; }
+  .shutter__core { transition: none; }
+  #screen-sent:not([hidden]) .error__icon,
+  #screen-sent:not([hidden]) .check { animation: none; }
+  .check { stroke-dashoffset: 0; }
+  ::view-transition-old(screen),
+  ::view-transition-new(screen) { animation: none; }
+}
