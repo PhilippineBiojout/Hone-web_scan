@@ -29,10 +29,17 @@ reçoit l'`id` dans l'URL, après le `#`, par le QR code.
 | Message | Sens | Contenu |
 |---|---|---|
 | `peer` | relais → chacun | `{type, role, connected}` : l'autre côté arrive ou part |
-| `photo-start` | téléphone → PC | `{type, id, mime, size}` |
+| `photo-start` | téléphone → PC | `{type, id, mime, size, page?}` : `page` absent = nouvelle page, `page: N` = rescan de la page N |
 | (binaire) | téléphone → PC | la photo, en morceaux de 256 Ko |
 | `photo-end` | téléphone → PC | `{type, id}` |
-| `photo-received` | PC → téléphone | `{type, id}` : accusé de réception |
+| `photo-received` | PC → téléphone | `{type, id, page?}` : accusé de réception, avec le numéro de page choisi par le PC |
+| `doc-new` | téléphone → PC | `{type}` : la prochaine photo commence un nouveau document |
+
+Les pages : chaque photo est une page du même document, et la colonne de gauche du
+site en garde une miniature (dans le `sessionStorage`, une liste par session).
+Toucher une miniature envoie la photo suivante avec `page: N`. Si le PC ne renvoie
+pas `page`, le site numérote lui-même, ce qui garde la compatibilité avec un
+plugin qui ignore ces champs.
 
 Codes de fermeture :
 

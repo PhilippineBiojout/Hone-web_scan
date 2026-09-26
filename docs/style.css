@@ -22,6 +22,7 @@
   --shadow-accent: 0 6px 20px rgba(100, 108, 255, 0.35);
 
   --radius: 16px;
+  --rail: 64px; /* largeur de la colonne des pages envoyées */
   --font: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   color-scheme: light;
@@ -552,6 +553,165 @@ svg {
   to { stroke-dashoffset: 0; }
 }
 
+/* ---------- Colonne des pages envoyées ---------- */
+/* Fixe à gauche, sur tous les écrans. Elle n'apparaît qu'une fois une page
+   envoyée : le JS pose .has-history sur <body>. */
+.history {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: var(--rail);
+  padding:
+    calc(16px + env(safe-area-inset-top))
+    0
+    calc(16px + env(safe-area-inset-bottom));
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+body:not(.has-history) .history { display: none; }
+
+/* Le contenu se décale pour ne pas passer sous la colonne */
+body.has-history .screen { padding-left: calc(var(--rail) + 16px); }
+
+.history__new {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  width: 48px;
+  padding: 8px 0 6px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.history__new:hover { background: var(--surface-2); color: var(--text); }
+.history__new:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.history__new:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.history__label {
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.history__list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Une miniature : la photo en petit, son numéro de page en pastille */
+.thumb {
+  position: relative;
+  display: block;
+  width: 48px;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  transition: transform 0.1s;
+}
+
+.thumb:active { transform: scale(0.94); }
+
+.thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.thumb__num {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(22, 22, 26, 0.72);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* La page choisie pour un rescan */
+.thumb.is-selected {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.thumb.is-selected .thumb__num { background: var(--accent); }
+
+.thumb:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Une page qui vient d'arriver (ou d'être remplacée) apparaît en douceur */
+.thumb.is-fresh { animation: pop-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+
+/* ---------- Bandeau « Rescan de la page N » ---------- */
+.rescan {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 8px;
+  padding: 6px 6px 6px 14px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 600;
+  animation: pop-in 0.3s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.rescan svg { width: 16px; height: 16px; }
+
+.rescan__cancel {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.rescan__cancel:hover { background: var(--accent-soft); }
+
+.rescan__cancel:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* ---------- Transition entre écrans (View Transitions API) ---------- */
 /* Chaque écran visible porte ce nom : le navigateur anime l'ancien
    qui s'en va et le nouveau qui arrive. Le fond ne bouge pas. */
@@ -588,6 +748,10 @@ svg {
   #screen-sent:not([hidden]) .error__icon,
   #screen-sent:not([hidden]) .check { animation: none; }
   .check { stroke-dashoffset: 0; }
+  .thumb.is-fresh,
+  .rescan { animation: none; }
+  .thumb,
+  .history__new { transition: none; }
   ::view-transition-old(screen),
   ::view-transition-new(screen) { animation: none; }
 }

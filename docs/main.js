@@ -18,13 +18,25 @@ const frag_status = document.getElementById("fragment_status");
 const frag_status_text = document.getElementById("fragment_status_text");
 const sent_again = document.getElementById("sent-again");
 const expired_retry = document.getElementById("expired-retry");
+const historyList = document.getElementById("history-list");
+const newDoc = document.getElementById("new-doc");
+const rescan = document.getElementById("rescan");
+const rescanText = document.getElementById("rescan-text");
+const rescanCancel = document.getElementById("rescan-cancel");
+const sentTitle = document.getElementById("sent-title");
+const sentLead = document.getElementById("sent-lead");
+const HISTORY_KEY = `hone-pages:${sessionId}`; // une liste par session Fragment
+const THUMB_WIDTH = 120; // px : assez pour une miniature nette, quelques Ko seulement
 
 
 let url = null;
-let stream = null; 
+let stream = null;
 let socket = null;
 let currentPhoto = null;
 let pendingPhotoId = null;
+let pages = loadPages();   // les pages du document en cours : [{ page, thumb }]
+let rescanPage = null;     // la page choisie pour être rescannée, sinon null
+let pendingSend = null;    // l'envoi en cours : { rescanPage, thumb (Promise) }
 
 
 photo.addEventListener("change", () => {
@@ -187,7 +199,7 @@ function connectRelay(){
         }
         else if (message.type === "photo-received" && message.id === pendingPhotoId){
             pendingPhotoId = null;
-            sendPhotoLabel.textContent = "Envoyer vers Fragment";
+            photoReceived(message.page);
             showScreen("screen-sent");
             sendPhoto.disabled = false;
         }
@@ -221,6 +233,7 @@ function setFragmentConnected(connected, label = "Fragment non connecté"){
     frag_status_text.textContent = connected ? "Connecté à Fragment" : label;
     frag_status.classList.toggle("is-offline", !connected);
     sendPhoto.disabled = !connected;
+    newDoc.disabled = !connected; // Fragment doit être là pour savoir qu'on change de note
 }
 
 
@@ -234,14 +247,17 @@ sendPhoto.addEventListener("click", () => {
 
     const photoId = crypto.randomUUID();
     sendPhoto.disabled = true;                 // pas de double envoi
-    sendPhotoLabel.textContent = "Envoi…";     
+    sendPhotoLabel.textContent = "Envoi…";
     pendingPhotoId = photoId;
-  
+    // La miniature se prépare pendant l'envoi ; on la range à l'accusé de réception
+    pendingSend = { rescanPage, thumb: makeThumb(currentPhoto) };
+
     socket.send(JSON.stringify({
         type: "photo-start",
         id: photoId,
-        mime: currentPhoto.type || "image/jpeg", 
+        mime: currentPhoto.type || "image/jpeg",
         size: currentPhoto.size,
+        page: rescanPage ?? undefined, // absent = nouvelle page (JSON.stringify l'omet)
     }));
 
 
@@ -258,3 +274,139 @@ expired_retry.addEventListener("click", () => {
     goHome();
     connectRelay();
 })
+
+
+/* ---------- Les pages du document ---------- */
+// Chaque photo envoyée devient une page de la même note dans Fragment. La colonne
+// de gauche en garde une miniature ; en toucher une permet de rescanner cette page
+// (la photo suivante part avec `page`, et Fragment remplace cette page-là).
+// C'est Fragment qui choisit le numéro (il le renvoie dans `photo-received`) ;
+// s'il ne le fait pas, on compte nous-mêmes.
+
+// Les miniatures survivent à un rechargement de la page (même session), pas au-delà
+function loadPages(){
+    try {
+        const saved = JSON.parse(sessionStorage.getItem(HISTORY_KEY));
+        return Array.isArray(saved) ? saved : [];
+    } catch {
+        return [];
+    }
+}
+
+function savePages(){
+    try {
+        sessionStorage.setItem(HISTORY_KEY, JSON.stringify(pages));
+    } catch {
+        // stockage plein ou bloqué : la colonne marche quand même, jusqu'au rechargement
+    }
+}
+
+// Une petite copie JPEG de la photo, en data URL (null si le navigateur ne sait pas la décoder)
+async function makeThumb(image){
+    try {
+        const bitmap = await createImageBitmap(image);
+        const canvas = document.createElement("canvas");
+        canvas.width = THUMB_WIDTH;
+        canvas.height = Math.round(bitmap.height * THUMB_WIDTH / bitmap.width);
+        canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        return canvas.toDataURL("image/jpeg", 0.7);
+    } catch {
+        return null;
+    }
+}
+
+// Fragment a bien reçu la photo : on range sa miniature et on adapte l'écran « Envoyé »
+async function photoReceived(pageFromFragment){
+    const send = pendingSend;
+    pendingSend = null;
+    const replaced = send?.rescanPage != null;
+    const page = Number.isInteger(pageFromFragment) ? pageFromFragment
+        : replaced ? send.rescanPage
+        : pages.reduce((max, p) => Math.max(max, p.page), 0) + 1;
+
+    sentTitle.textContent = replaced ? `Page ${page} remplacée !` : `Page ${page} envoyée !`;
+    sentLead.textContent = replaced
+        ? "Fragment remplace cette page dans ta note."
+        : "Elle s'ajoute à la suite de ta note dans Fragment.";
+    setRescan(null);
+
+    const thumb = send ? await send.thumb : null;
+    const existing = pages.find((p) => p.page === page);
+    if (existing) existing.thumb = thumb ?? existing.thumb;
+    else pages.push({ page, thumb });
+    pages.sort((a, b) => a.page - b.page);
+    savePages();
+    renderPages(page);
+}
+
+// Redessine la colonne ; `fresh` = la page qui vient d'arriver (animée)
+function renderPages(fresh = null){
+    document.body.classList.toggle("has-history", pages.length > 0);
+    historyList.replaceChildren(...pages.map(({ page, thumb }) => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "thumb";
+        button.classList.toggle("is-selected", page === rescanPage);
+        button.classList.toggle("is-fresh", page === fresh);
+        button.setAttribute("aria-label", `Page ${page} : la rescanner`);
+        button.setAttribute("aria-pressed", String(page === rescanPage));
+        if (thumb) {
+            const img = document.createElement("img");
+            img.src = thumb;
+            img.alt = "";
+            button.append(img);
+        }
+        const num = document.createElement("span");
+        num.className = "thumb__num";
+        num.textContent = page;
+        button.append(num);
+        button.addEventListener("click", () => chooseRescan(page));
+        item.append(button);
+        return item;
+    }));
+}
+
+// Choisit (ou oublie, avec null) la page à rescanner : bandeau, bouton d'envoi, miniature
+function setRescan(page){
+    rescanPage = page;
+    rescan.hidden = page === null;
+    rescanText.textContent = `Rescan de la page ${page}`;
+    sendPhotoLabel.textContent = page === null ? "Envoyer vers Fragment" : `Remplacer la page ${page}`;
+    historyList.querySelectorAll(".thumb").forEach((button, i) => {
+        const selected = pages[i]?.page === page;
+        button.classList.toggle("is-selected", selected);
+        button.setAttribute("aria-pressed", String(selected));
+    });
+}
+
+// Toucher une miniature : la choisir pour un rescan (ou la relâcher si elle l'était déjà)
+function chooseRescan(page){
+    if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas de cible
+    const next = page === rescanPage ? null : page;
+    // Depuis « Envoyé » ou une erreur, on revient à l'accueil pour prendre la photo
+    if (welcomeScreen.hidden) {
+        withTransition(() => {
+            setScreen("screen-welcome");
+            setRescan(next);
+        });
+    } else {
+        setRescan(next);
+    }
+}
+
+rescanCancel.addEventListener("click", () => setRescan(null));
+
+newDoc.addEventListener("click", () => {
+    if (socket?.readyState !== WebSocket.OPEN || pendingPhotoId !== null) return;
+    if (pages.length > 0 && !confirm("Commencer un nouveau document ? La prochaine photo ouvrira une nouvelle note, et ces miniatures seront effacées.")) return;
+    socket.send(JSON.stringify({ type: "doc-new" }));
+    pages = [];
+    savePages();
+    setRescan(null);
+    renderPages();
+    goHome();
+});
+
+renderPages();
