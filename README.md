@@ -29,17 +29,23 @@ reçoit l'`id` dans l'URL, après le `#`, par le QR code.
 | Message | Sens | Contenu |
 |---|---|---|
 | `peer` | relais → chacun | `{type, role, connected}` : l'autre côté arrive ou part |
-| `photo-start` | téléphone → PC | `{type, id, mime, size, page?}` : `page` absent = nouvelle page, `page: N` = rescan de la page N |
+| `photo-start` | téléphone → PC | `{type, id, mime, size, doc, page, replace}` : la page `page` du document `doc` ; `replace` = remplacer cette page plutôt que l'ajouter |
 | (binaire) | téléphone → PC | la photo, en morceaux de 256 Ko |
 | `photo-end` | téléphone → PC | `{type, id}` |
-| `photo-received` | PC → téléphone | `{type, id, page?}` : accusé de réception, avec le numéro de page choisi par le PC |
-| `doc-new` | téléphone → PC | `{type}` : la prochaine photo commence un nouveau document |
+| `photo-received` | PC → téléphone | `{type, id}` : accusé de réception |
+| `doc-new` | téléphone → PC | `{type, doc}` : un nouveau document commence (facultatif : chaque photo porte déjà son `doc`) |
 
-Les pages : chaque photo est une page du même document, et la colonne de gauche du
-site en garde une miniature (dans le `sessionStorage`, une liste par session).
-Toucher une miniature envoie la photo suivante avec `page: N`. Si le PC ne renvoie
-pas `page`, le site numérote lui-même, ce qui garde la compatibilité avec un
-plugin qui ignore ces champs.
+Les pages : un document = une suite de pages qui formeront une seule note dans
+Fragment. **C'est le téléphone qui numérote** (1, 2, 3… dans l'ordre des envois) :
+chaque photo s'ajoute à la suite (`replace: false`), sauf si on rouvre une page
+depuis la colonne de gauche et qu'on la met à jour (`replace: true`, même numéro).
+« Nouveau » change l'identifiant `doc`. Le document et ses miniatures sont gardés
+dans le `sessionStorage` (un par session) ; les photos complètes restent en mémoire.
+
+Anti-cache : le QR ouvre `…/Hone-web_scan/?v=<horodatage>#<session>`, une adresse
+neuve à chaque fois, et `index.html` recopie ce `?v=…` sur `style.css` et `main.js`.
+Le téléphone a donc toujours les trois fichiers de la même version, sans numéro de
+version à tenir à jour.
 
 Codes de fermeture :
 

@@ -25,7 +25,11 @@ const rescanText = document.getElementById("rescan-text");
 const rescanCancel = document.getElementById("rescan-cancel");
 const sentTitle = document.getElementById("sent-title");
 const sentLead = document.getElementById("sent-lead");
-const HISTORY_KEY = `hone-pages:${sessionId}`; // une liste par session Fragment
+const pageTitle = document.getElementById("page-title");
+const updatePage = document.getElementById("update-page");
+const updatePageLabel = document.getElementById("update-page-label");
+const closePage = document.getElementById("close-page");
+const DOC_KEY = `hone-doc:${sessionId}`; // un document par session Fragment (survit à un rechargement)
 const THUMB_WIDTH = 120; // px : assez pour une miniature nette, quelques Ko seulement
 
 
@@ -34,9 +38,11 @@ let stream = null;
 let socket = null;
 let currentPhoto = null;
 let pendingPhotoId = null;
-let pages = loadPages();   // les pages du document en cours : [{ page, thumb }]
-let rescanPage = null;     // la page choisie pour être rescannée, sinon null
-let pendingSend = null;    // l'envoi en cours : { rescanPage, thumb (Promise) }
+let doc = loadDoc();        // le document en cours : { id, pages: [{ page, thumb }] }, pages dans l'ordre
+const photos = new Map();   // page → la photo complète (Blob), en mémoire seulement : perdue au rechargement
+let rescanPage = null;      // la page qu'on est en train de remplacer, sinon null (= on ajoute une page)
+let viewedPage = null;      // la page affichée en grand depuis la colonne, sinon null
+let pendingSend = null;     // l'envoi en cours : { doc, page, replace, photo, thumb (Promise) }
 
 
 photo.addEventListener("change", () => {
@@ -64,15 +70,32 @@ photo.addEventListener("change", () => {
 
 // Affiche une image (fichier importé ou photo prise) dans le viseur
 function showPhoto(image){
-    if (url != null){
-        URL.revokeObjectURL(url);
-    }
-    url = URL.createObjectURL(image);
-    
-    preview.src = url;
+    setPreview(image);
+    // Une nouvelle photo, pas une page déjà envoyée : boutons « Envoyer / Changer de photo »
+    welcomeScreen.classList.remove("has-page");
+    viewedPage = null;
+    updateSelection();
     welcomeScreen.classList.add("has-photo");
     stopCamera(); // si la photo vient de la caméra, ou d'un import depuis le viseur
     currentPhoto = image;
+    // « Ajouter la page 3 » ou « Remplacer la page 2 » : on voit où la photo va atterrir
+    sendPhotoLabel.textContent = sendLabel();
+}
+
+// Met une image dans le viseur : un Blob (photo) ou une URL (miniature enregistrée).
+// On libère l'URL du Blob précédent : les photos complètes, elles, restent dans `photos`.
+function setPreview(source){
+    if (url != null){
+        URL.revokeObjectURL(url);
+        url = null;
+    }
+    if (source instanceof Blob){
+        url = URL.createObjectURL(source);
+        preview.src = url;
+    }
+    else{
+        preview.src = source ?? "";
+    }
 }
 
 
@@ -99,8 +122,15 @@ function showScreen(id){
     withTransition(() => setScreen(id));
 }
 
-// Retour à l'accueil de base (Caméra / Importer), d'où qu'on vienne
-function goHome(){
+// Retour à l'accueil de base (Caméra / Importer), d'où qu'on vienne.
+// Par défaut on abandonne aussi la mise à jour en cours : la prochaine photo
+// s'ajoutera à la suite. `keepRescan` la garde (« Changer de photo » pendant
+// une mise à jour : on reprend la photo, mais toujours pour la même page).
+function goHome({ keepRescan = false } = {}){
+    if (!keepRescan) setRescan(null);
+    viewedPage = null;
+    updateSelection();
+
     const alreadyHome = !welcomeScreen.hidden
         && !welcomeScreen.classList.contains("has-photo")
         && !welcomeScreen.classList.contains("has-camera");
@@ -108,7 +138,7 @@ function goHome(){
 
     withTransition(() => {
         stopCamera();
-        welcomeScreen.classList.remove("has-photo");
+        welcomeScreen.classList.remove("has-photo", "has-page");
         setScreen("screen-welcome");
     });
 }
@@ -119,8 +149,9 @@ function showError(message){
 }
 
 
-retry.addEventListener("click", goHome);
-home.addEventListener("click", goHome);
+// (Des fonctions fléchées : sinon goHome recevrait l'événement du clic comme options)
+retry.addEventListener("click", () => goHome());
+home.addEventListener("click", () => goHome());
 
 async function startCamera(button) {
     if (stream != null) return; // déjà ouverte
@@ -137,7 +168,8 @@ async function startCamera(button) {
             audio: false,
         });
         video.srcObject = stream;
-        welcomeScreen.classList.remove("has-photo"); // si on vient de « Changer de photo »
+        // si on vient de « Changer de photo » ou d'une page rouverte (« Mettre à jour »)
+        welcomeScreen.classList.remove("has-photo", "has-page");
         welcomeScreen.classList.add("has-camera");
     } catch (err) {
         console.error(err.name, err.message);
@@ -156,7 +188,7 @@ async function startCamera(button) {
 }
 
 authorization.addEventListener("click", () => startCamera(authorization));
-retake.addEventListener("click", goHome);
+retake.addEventListener("click", () => goHome({ keepRescan: true }));
 
 function stopCamera() {
     if (stream == null) return;
@@ -165,7 +197,7 @@ function stopCamera() {
     welcomeScreen.classList.remove("has-camera");
 }
 
-cancelCamera.addEventListener("click", goHome);
+cancelCamera.addEventListener("click", () => goHome());
 
 shutter.addEventListener("click", () => {
     // La vidéo n'a pas encore reçu d'image : rien à capturer
@@ -199,7 +231,7 @@ function connectRelay(){
         }
         else if (message.type === "photo-received" && message.id === pendingPhotoId){
             pendingPhotoId = null;
-            photoReceived(message.page);
+            photoReceived();
             showScreen("screen-sent");
             sendPhoto.disabled = false;
         }
@@ -249,15 +281,21 @@ sendPhoto.addEventListener("click", () => {
     sendPhoto.disabled = true;                 // pas de double envoi
     sendPhotoLabel.textContent = "Envoi…";
     pendingPhotoId = photoId;
-    // La miniature se prépare pendant l'envoi ; on la range à l'accusé de réception
-    pendingSend = { rescanPage, thumb: makeThumb(currentPhoto) };
+    // Où va cette photo : la page qu'on met à jour, sinon une nouvelle page à la suite.
+    // C'est le téléphone qui numérote : il est le seul à voir toutes les pages.
+    const replace = rescanPage !== null;
+    const page = replace ? rescanPage : nextPage();
+    // La miniature se prépare pendant l'envoi ; on range tout à l'accusé de réception
+    pendingSend = { doc: doc.id, page, replace, photo: currentPhoto, thumb: makeThumb(currentPhoto) };
 
     socket.send(JSON.stringify({
         type: "photo-start",
         id: photoId,
         mime: currentPhoto.type || "image/jpeg",
         size: currentPhoto.size,
-        page: rescanPage ?? undefined, // absent = nouvelle page (JSON.stringify l'omet)
+        doc: doc.id,   // le document (= la note) auquel appartient la page
+        page,          // son numéro : 1, 2, 3… dans l'ordre des envois
+        replace,       // true = remplacer cette page, false = l'ajouter à la suite
     }));
 
 
@@ -268,7 +306,7 @@ sendPhoto.addEventListener("click", () => {
     socket.send(JSON.stringify({ type: "photo-end", id: photoId }));
 });
 
-sent_again.addEventListener("click", goHome);
+sent_again.addEventListener("click", () => goHome());
 
 expired_retry.addEventListener("click", () => {
     goHome();
@@ -277,28 +315,44 @@ expired_retry.addEventListener("click", () => {
 
 
 /* ---------- Les pages du document ---------- */
-// Chaque photo envoyée devient une page de la même note dans Fragment. La colonne
-// de gauche en garde une miniature ; en toucher une permet de rescanner cette page
-// (la photo suivante part avec `page`, et Fragment remplace cette page-là).
-// C'est Fragment qui choisit le numéro (il le renvoie dans `photo-received`) ;
-// s'il ne le fait pas, on compte nous-mêmes.
+// Un « document » = une suite de pages qui formeront UNE note dans Fragment (puis un PDF).
+// Chaque photo envoyée s'ajoute à la suite : page 1, puis 2, puis 3… Rien n'est une
+// mise à jour d'une autre page, sauf si on le demande :
+//   - toucher une miniature de la colonne affiche cette page en grand ;
+//   - « Mettre à jour la page N » reprend une photo qui REMPLACERA la page N, et elle seule ;
+//   - « Nouveau » (en haut de la colonne) commence un autre document, donc une autre note.
+// Chaque photo part avec { doc, page, replace } : Fragment n'a qu'à ranger la page N
+// du document `doc` dans sa note, à la suite ou à la place de l'ancienne.
 
-// Les miniatures survivent à un rechargement de la page (même session), pas au-delà
-function loadPages(){
+// Le document est gardé dans le sessionStorage : un rechargement de la page ne le perd pas.
+// Seules les miniatures y sont (quelques Ko chacune) ; les photos complètes sont trop
+// lourdes et restent en mémoire (`photos`).
+function loadDoc(){
     try {
-        const saved = JSON.parse(sessionStorage.getItem(HISTORY_KEY));
-        return Array.isArray(saved) ? saved : [];
+        const saved = JSON.parse(sessionStorage.getItem(DOC_KEY));
+        if (saved && typeof saved.id === "string" && Array.isArray(saved.pages)) return saved;
     } catch {
-        return [];
+        // stockage bloqué ou contenu illisible : on repart d'un document vide
     }
+    return { id: crypto.randomUUID(), pages: [] };
 }
 
-function savePages(){
+function saveDoc(){
     try {
-        sessionStorage.setItem(HISTORY_KEY, JSON.stringify(pages));
+        sessionStorage.setItem(DOC_KEY, JSON.stringify(doc));
     } catch {
         // stockage plein ou bloqué : la colonne marche quand même, jusqu'au rechargement
     }
+}
+
+// Le numéro de la prochaine page ajoutée à la suite
+function nextPage(){
+    return doc.pages.reduce((max, p) => Math.max(max, p.page), 0) + 1;
+}
+
+// Le texte du bouton d'envoi : on voit où la photo va atterrir
+function sendLabel(){
+    return rescanPage === null ? `Ajouter la page ${nextPage()}` : `Remplacer la page ${rescanPage}`;
 }
 
 // Une petite copie JPEG de la photo, en data URL (null si le navigateur ne sait pas la décoder)
@@ -316,42 +370,41 @@ async function makeThumb(image){
     }
 }
 
-// Fragment a bien reçu la photo : on range sa miniature et on adapte l'écran « Envoyé »
-async function photoReceived(pageFromFragment){
+// Fragment a bien reçu la photo : on range la page (miniature + photo) et on adapte « Envoyé »
+async function photoReceived(){
     const send = pendingSend;
     pendingSend = null;
-    const replaced = send?.rescanPage != null;
-    const page = Number.isInteger(pageFromFragment) ? pageFromFragment
-        : replaced ? send.rescanPage
-        : pages.reduce((max, p) => Math.max(max, p.page), 0) + 1;
+    if (send === null) return;
 
-    sentTitle.textContent = replaced ? `Page ${page} remplacée !` : `Page ${page} envoyée !`;
-    sentLead.textContent = replaced
-        ? "Fragment remplace cette page dans ta note."
+    sentTitle.textContent = send.replace ? `Page ${send.page} mise à jour !` : `Page ${send.page} ajoutée !`;
+    sentLead.textContent = send.replace
+        ? "Elle remplace l'ancienne version de cette page dans ta note."
         : "Elle s'ajoute à la suite de ta note dans Fragment.";
-    setRescan(null);
+    setRescan(null); // la mise à jour est faite : la prochaine photo repart à la suite
 
-    const thumb = send ? await send.thumb : null;
-    const existing = pages.find((p) => p.page === page);
+    const thumb = await send.thumb;
+    // Pendant l'attente de la miniature, on a pu passer à un nouveau document : on ne mélange pas
+    if (send.doc !== doc.id) return;
+    photos.set(send.page, send.photo);
+    const existing = doc.pages.find((p) => p.page === send.page);
     if (existing) existing.thumb = thumb ?? existing.thumb;
-    else pages.push({ page, thumb });
-    pages.sort((a, b) => a.page - b.page);
-    savePages();
-    renderPages(page);
+    else doc.pages.push({ page: send.page, thumb });
+    doc.pages.sort((a, b) => a.page - b.page);
+    saveDoc();
+    renderPages(send.page);
 }
 
 // Redessine la colonne ; `fresh` = la page qui vient d'arriver (animée)
 function renderPages(fresh = null){
-    document.body.classList.toggle("has-history", pages.length > 0);
-    historyList.replaceChildren(...pages.map(({ page, thumb }) => {
+    document.body.classList.toggle("has-history", doc.pages.length > 0);
+    historyList.replaceChildren(...doc.pages.map(({ page, thumb }) => {
         const item = document.createElement("li");
         const button = document.createElement("button");
         button.type = "button";
         button.className = "thumb";
-        button.classList.toggle("is-selected", page === rescanPage);
+        button.dataset.page = page;
         button.classList.toggle("is-fresh", page === fresh);
-        button.setAttribute("aria-label", `Page ${page} : la rescanner`);
-        button.setAttribute("aria-pressed", String(page === rescanPage));
+        button.setAttribute("aria-label", `Page ${page} : l'afficher`);
         if (thumb) {
             const img = document.createElement("img");
             img.src = thumb;
@@ -362,49 +415,78 @@ function renderPages(fresh = null){
         num.className = "thumb__num";
         num.textContent = page;
         button.append(num);
-        button.addEventListener("click", () => chooseRescan(page));
+        button.addEventListener("click", () => openPage(page));
         item.append(button);
         return item;
     }));
+    updateSelection();
 }
 
-// Choisit (ou oublie, avec null) la page à rescanner : bandeau, bouton d'envoi, miniature
-function setRescan(page){
-    rescanPage = page;
-    rescan.hidden = page === null;
-    rescanText.textContent = `Rescan de la page ${page}`;
-    sendPhotoLabel.textContent = page === null ? "Envoyer vers Fragment" : `Remplacer la page ${page}`;
-    historyList.querySelectorAll(".thumb").forEach((button, i) => {
-        const selected = pages[i]?.page === page;
-        button.classList.toggle("is-selected", selected);
-        button.setAttribute("aria-pressed", String(selected));
+// Entoure dans la colonne la page affichée en grand, ou celle qu'on est en train de remplacer
+function updateSelection(){
+    const selected = viewedPage ?? rescanPage;
+    historyList.querySelectorAll(".thumb").forEach((button) => {
+        const on = Number(button.dataset.page) === selected;
+        button.classList.toggle("is-selected", on);
+        button.setAttribute("aria-pressed", String(on));
     });
 }
 
-// Toucher une miniature : la choisir pour un rescan (ou la relâcher si elle l'était déjà)
-function chooseRescan(page){
-    if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas de cible
-    const next = page === rescanPage ? null : page;
-    // Depuis « Envoyé » ou une erreur, on revient à l'accueil pour prendre la photo
-    if (welcomeScreen.hidden) {
-        withTransition(() => {
-            setScreen("screen-welcome");
-            setRescan(next);
-        });
-    } else {
-        setRescan(next);
-    }
+// Démarre (page) ou abandonne (null) le remplacement d'une page : bandeau, bouton d'envoi, colonne
+function setRescan(page){
+    rescanPage = page;
+    rescan.hidden = page === null;
+    rescanText.textContent = `Mise à jour de la page ${page}`;
+    sendPhotoLabel.textContent = sendLabel();
+    updateSelection();
 }
+
+// Toucher une miniature : afficher cette page en grand, comme une photo qu'on vient de prendre.
+// La toucher à nouveau referme l'affichage.
+function openPage(page){
+    if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas d'écran
+    if (viewedPage === page && !welcomeScreen.hidden){
+        goHome();
+        return;
+    }
+    const saved = doc.pages.find((p) => p.page === page);
+    withTransition(() => {
+        stopCamera();
+        setRescan(null); // on regarde une page : aucune mise à jour n'est lancée pour l'instant
+        viewedPage = page;
+        currentPhoto = null; // rien à envoyer depuis cet écran
+        // La photo complète si on l'a encore, sinon (après un rechargement) sa miniature
+        setPreview(photos.get(page) ?? saved?.thumb);
+        pageTitle.textContent = `Page ${page}`;
+        updatePageLabel.textContent = `Mettre à jour la page ${page}`;
+        welcomeScreen.classList.add("has-photo", "has-page");
+        setScreen("screen-welcome");
+        updateSelection();
+    });
+}
+
+// « Mettre à jour la page N » : on ouvre la caméra, et la photo prise remplacera la page N
+updatePage.addEventListener("click", () => {
+    const page = viewedPage;
+    if (page === null) return;
+    viewedPage = null;
+    setRescan(page);
+    startCamera(updatePage); // en cas d'échec, l'écran d'erreur ; « Importer » reste possible depuis la caméra
+});
+
+closePage.addEventListener("click", () => goHome());
 
 rescanCancel.addEventListener("click", () => setRescan(null));
 
 newDoc.addEventListener("click", () => {
     if (socket?.readyState !== WebSocket.OPEN || pendingPhotoId !== null) return;
-    if (pages.length > 0 && !confirm("Commencer un nouveau document ? La prochaine photo ouvrira une nouvelle note, et ces miniatures seront effacées.")) return;
-    socket.send(JSON.stringify({ type: "doc-new" }));
-    pages = [];
-    savePages();
-    setRescan(null);
+    if (doc.pages.length > 0 && !confirm("Commencer un nouveau document ? La prochaine photo ouvrira une nouvelle note, et ces miniatures seront effacées.")) return;
+    doc = { id: crypto.randomUUID(), pages: [] };
+    photos.clear();
+    // Prévient Fragment tout de suite (il peut fermer la note en cours) ; chaque photo
+    // porte de toute façon son `doc`, donc ce message n'est pas indispensable.
+    socket.send(JSON.stringify({ type: "doc-new", doc: doc.id }));
+    saveDoc();
     renderPages();
     goHome();
 });

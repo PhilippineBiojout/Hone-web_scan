@@ -367,6 +367,13 @@ svg {
   from { opacity: 0; transform: translate(var(--from)); }
 }
 
+/* ---------- État « page déjà envoyée » ---------- */
+/* Le JS pose .has-page EN PLUS de .has-photo : l'image s'affiche en grand comme
+   une photo qu'on vient de prendre, mais avec les textes et boutons .when-page
+   (mettre à jour / retour) à la place de ceux de .when-photo (envoyer / changer). */
+.screen:not(.has-page) .when-page,
+.screen.has-page .when-photo { display: none !important; }
+
 /* ---------- État « caméra ouverte » ---------- */
 /* Le JS ajoute .has-camera sur l'écran d'accueil */
 .screen:not(.has-camera) .when-camera,
