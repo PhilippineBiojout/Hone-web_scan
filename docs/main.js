@@ -584,7 +584,6 @@ async function detectCorners(photo){
     let mat;
     let contour;
     let coins;
-    let hull;
     let approx;
     try{
         mat = cv.imread(canvas);
@@ -595,7 +594,6 @@ async function detectCorners(photo){
             const lisse = brut ? smoothContour(brut, mat) : null;
             if (lisse) { brut.delete(); contour = lisse; }
             else { contour = brut; }
-            if (window.DEBUG_SCAN) console.log("contour :", lisse ? "jscanify lissé" : "jscanify brut");
         }
         approx = new cv.Mat();
         if (contour) {
@@ -610,25 +608,6 @@ async function detectCorners(photo){
             // Aucun écart n'a donné 4 points : l'ancienne méthode de jscanify
             if (coins === undefined) coins = s.getCornerPoints(contour);
         }
-        if (window.DEBUG_SCAN && contour) {
-            // DEBUG : le contour retenu (vert) et les 4 coins choisis (rouge) sur l'image réduite
-            const vue = mat.clone();
-            const liste = new cv.MatVector();
-            liste.push_back(contour);
-            cv.drawContours(vue, liste, 0, new cv.Scalar(0, 255, 0, 255), 2);
-            if (coins) {
-                const { topLeftCorner: a, topRightCorner: b, bottomRightCorner: c, bottomLeftCorner: d } = coins;
-                [[a, b], [b, c], [c, d], [d, a]].forEach(([p, q]) =>
-                    cv.line(vue, new cv.Point(p.x, p.y), new cv.Point(q.x, q.y), new cv.Scalar(255, 0, 0, 255), 3));
-            }
-            const c2 = document.createElement("canvas");
-            cv.imshow(c2, vue);
-            document.body.append(document.createTextNode("② contour (vert) et coins retenus (rouge)"), c2);
-            console.log("points du polygone :", approx.rows, "coins :", JSON.stringify(coins),
-                "image :", mat.cols, "×", mat.rows);
-            vue.delete(); liste.delete();
-        }
-
     }
 
     
@@ -637,7 +616,6 @@ async function detectCorners(photo){
     finally{
         if (contour){contour.delete()};
         if (mat){mat.delete()};
-        if (hull) hull.delete();
         if (approx) approx.delete();
         // Dans le finally : libérée même si OpenCV a planté
         bitmap.close();
@@ -665,71 +643,6 @@ async function detectCorners(photo){
 
 }
 
-// Le contour de la feuille, trouvé par sa LUMINOSITÉ plutôt que par ses bords : une feuille,
-// c'est la plus grande tache claire et uniforme de la photo. Chercher des bords (Canny,
-// comme jscanify) attrape aussi le veinage du bois, qui fait des « pics » au contour, et
-// approxPolyDP prend la pointe d'un pic pour un coin. Ici, l'« ouverture » morphologique
-// efface tout ce qui est plus fin que son noyau (pics, veines) avant de chercher le contour.
-// Renvoie une cv.Mat à libérer par l'appelant, ou null (rien de plausible : on laisse jscanify essayer).
-function findPaperByBrightness(mat){
-    let gris = null, binaire = null, noyauOuverture = null, noyauFermeture = null;
-    let contours = null, hierarchie = null;
-    try {
-        // 1. Gris, puis flou : atténue le grain du papier et du bois avant le seuil
-        gris = new cv.Mat();
-        cv.cvtColor(mat, gris, cv.COLOR_RGBA2GRAY);
-        cv.GaussianBlur(gris, gris, new cv.Size(7, 7), 0);
-
-        // 2. Seuil automatique (Otsu) : OpenCV choisit seul la limite clair / sombre.
-        //    Résultat en noir et blanc : la feuille en blanc, la table en noir.
-        binaire = new cv.Mat();
-        cv.threshold(gris, binaire, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-
-        // 3. Ouverture : efface le blanc plus fin que 15 px (pics, veines claires du bois).
-        //    Un noyau rectangulaire garde les coins de la feuille bien carrés.
-        noyauOuverture = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(15, 15));
-        cv.morphologyEx(binaire, binaire, cv.MORPH_OPEN, noyauOuverture);
-
-        // 4. Fermeture : bouche les trous noirs que l'écriture fait dans la feuille blanche
-        noyauFermeture = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(25, 25));
-        cv.morphologyEx(binaire, binaire, cv.MORPH_CLOSE, noyauFermeture);
-
-        // 5. Les contours extérieurs seulement (pas ceux des trous), et on garde le plus grand
-        if (window.DEBUG_SCAN) {
-            // DEBUG : le masque clair/sombre après seuil + ouverture + fermeture (blanc = « la feuille »)
-            const vueMasque = document.createElement("canvas");
-            cv.imshow(vueMasque, binaire);
-            vueMasque.title = "masque";
-            document.body.append(document.createTextNode("① masque (blanc = pris pour la feuille)"), vueMasque);
-        }
-        contours = new cv.MatVector();
-        hierarchie = new cv.Mat();
-        cv.findContours(binaire, contours, hierarchie, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-        let meilleur = -1;
-        let aireMax = 0;
-        for (let i = 0; i < contours.size(); i++){
-            const c = contours.get(i);
-            const aire = cv.contourArea(c);
-            c.delete();
-            if (aire > aireMax){ aireMax = aire; meilleur = i; }
-        }
-
-        // 6. Moins de 20 % de l'image : ce n'est pas la feuille (le même garde-fou que detectCorners)
-        if (meilleur === -1 || aireMax < 0.2 * mat.rows * mat.cols) return null;
-
-        // Une copie, qui survit au delete() de `contours` dans le finally
-        const trouve = contours.get(meilleur);
-        const copie = trouve.clone();
-        trouve.delete();
-        return copie;
-    }
-    // Une erreur d'OpenCV : on laisse la détection de jscanify prendre le relais
-    catch { return null; }
-    finally {
-        for (const m of [gris, binaire, noyauOuverture, noyauFermeture, contours, hierarchie]) if (m) m.delete();
-    }
-}
-
 // Débarrasse le contour de jscanify de ses « pics » : quelques pixels qui s'échappent le
 // long du veinage du bois, et dont approxPolyDP prendrait la pointe pour un coin.
 // 1. on peint l'intérieur du contour en blanc sur fond noir (la silhouette de la feuille) ;
@@ -749,13 +662,6 @@ function smoothContour(contour, mat){
         // 2. L'ouverture qui efface les pics (à monter si des pics résistent, à baisser si un coin est rogné)
         noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(21, 21));
         cv.morphologyEx(masque, masque, cv.MORPH_OPEN, noyau);
-
-        if (window.DEBUG_SCAN) {
-            // DEBUG : la silhouette lissée (blanc = la feuille)
-            const vueMasque = document.createElement("canvas");
-            cv.imshow(vueMasque, masque);
-            document.body.append(document.createTextNode("① silhouette lissée"), vueMasque);
-        }
 
         // 3. Le plus grand contour extérieur de la silhouette propre
         contours = new cv.MatVector();
@@ -785,7 +691,7 @@ function smoothContour(contour, mat){
 }
 
 function ordonnerCoins(approx){
-    // data32S = [x1, y1, x2, y2, x3, y3, x4, y4] (des entiers : convexHull rend des points entiers)
+    // data32S = [x1, y1, x2, y2, x3, y3, x4, y4] (des entiers : approxPolyDP rend des points entiers)
     const d = approx.data32S;
     const points = [0, 2, 4, 6].map((i) => ({ x: d[i], y: d[i + 1] }));
 
