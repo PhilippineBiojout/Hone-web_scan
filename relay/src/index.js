@@ -43,8 +43,8 @@ export class Session extends DurableObject{
             if (this.open("desktop").length ===0){
                 return reject(client, server, 4404, "Session inconnue ou fermée");
             }
-            if (this.open("phone").length >0){
-                return reject(client, server, 4409, "Un téléphone est déjà connecté");
+            for (const tel of this.open("phone")){
+                tel.close(4001, "Ouvert dans un autre onglet");
             }
         }
 

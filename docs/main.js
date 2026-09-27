@@ -283,6 +283,12 @@ function connectRelay(){
             showError("Ce lien a expiré. Rescanne le QR code depuis Fragment.");
         }
         else if(event.code === 4409){
+            document.getElementById("expired-message").textContent ="Cette session Fragment est fermée. Rescanne le QR code depuis Fragment pour continuer.";
+
+            showScreen("screen-expired");
+        }
+        else if(event.code ===4001){
+            document.getElementById("expired-message").textContent = "Le scan a été ouvert dans un autre onglet. Tu peux fermer celui-ci.";
             showScreen("screen-expired");
         }
         else{
@@ -643,12 +649,6 @@ async function detectCorners(photo){
 
 }
 
-// Débarrasse le contour de jscanify de ses « pics » : quelques pixels qui s'échappent le
-// long du veinage du bois, et dont approxPolyDP prendrait la pointe pour un coin.
-// 1. on peint l'intérieur du contour en blanc sur fond noir (la silhouette de la feuille) ;
-// 2. une « ouverture » morphologique efface tout ce qui est plus fin que 21 px : les pics
-//    disparaissent, la feuille (énorme) reste, coins carrés grâce au noyau rectangulaire ;
-// 3. on reprend le contour de cette silhouette propre.
 // Renvoie une cv.Mat à libérer par l'appelant, ou null (on garde alors le contour brut).
 function smoothContour(contour, mat){
     let masque = null, liste = null, noyau = null, contours = null, hierarchie = null;
@@ -659,7 +659,7 @@ function smoothContour(contour, mat){
         liste.push_back(contour);
         cv.drawContours(masque, liste, 0, new cv.Scalar(255), -1);
 
-        // 2. L'ouverture qui efface les pics (à monter si des pics résistent, à baisser si un coin est rogné)
+        //On efface les pics
         noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(21, 21));
         cv.morphologyEx(masque, masque, cv.MORPH_OPEN, noyau);
 
