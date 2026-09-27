@@ -111,16 +111,26 @@ async function showPhoto(image){
 // Met une image dans le viseur : un Blob (photo) ou une URL (miniature enregistrée).
 // On libère l'URL du Blob précédent : les photos complètes, elles, restent dans `photos`.
 function setPreview(source){
+    // D'abord libérer l'image précédente, dans tous les cas
     if (url != null){
         URL.revokeObjectURL(url);
         url = null;
     }
+    // Pas d'image (une page d'un PDF repris) : on cache l'aperçu et on s'arrête là,
+    // sinon la suite remettrait une adresse vide (icône d'image cassée)
+    if (source == null){
+        preview.hidden = true;
+        preview.removeAttribute("src");
+        return;
+    }
+    // Une vraie image : on ré-affiche l'aperçu (il a pu être caché par une page sans image)
+    preview.hidden = false;
     if (source instanceof Blob){
         url = URL.createObjectURL(source);
         preview.src = url;
     }
     else{
-        preview.src = source ?? "";
+        preview.src = source;
     }
 }
 

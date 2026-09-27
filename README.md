@@ -33,14 +33,23 @@ reçoit l'`id` dans l'URL, après le `#`, par le QR code.
 | (binaire) | téléphone → PC | la photo, en morceaux de 256 Ko |
 | `photo-end` | téléphone → PC | `{type, id}` |
 | `photo-received` | PC → téléphone | `{type, id}` : accusé de réception |
-| `doc-new` | téléphone → PC | `{type, doc}` : un nouveau document commence (facultatif : chaque photo porte déjà son `doc`) |
+| `doc-new` | téléphone → PC | `{type, doc}` : « Nouveau » sur le téléphone. Si le PC écrivait dans un PDF existant (« Reprendre le scan »), il repasse sur son dossier par défaut : le nouveau document sera un nouveau PDF |
+| `destination` | PC → téléphone | `{type, key, pages}` : où vont les photos. `key` = `"folder:<chemin>"` ou `"pdf:<chemin>"`, `pages` = nombre de pages du PDF choisi (0 pour un dossier). Envoyé à chaque ouverture du QR et à chaque connexion du téléphone |
 
-Les pages : un document = une suite de pages qui formeront une seule note dans
+Les pages : un document = une suite de pages qui formeront un seul PDF dans
 Fragment. **C'est le téléphone qui numérote** (1, 2, 3… dans l'ordre des envois) :
 chaque photo s'ajoute à la suite (`replace: false`), sauf si on rouvre une page
 depuis la colonne de gauche et qu'on la met à jour (`replace: true`, même numéro).
 « Nouveau » change l'identifiant `doc`. Le document et ses miniatures sont gardés
 dans le `sessionStorage` (un par session) ; les photos complètes restent en mémoire.
+
+La destination : dans Fragment, un clic droit sur un PDF (« Reprendre le scan ») ou
+sur un dossier (« Scanner dans ce dossier »), ou Ctrl+P « Scanner dans ce PDF », ouvre
+le QR vers cet endroit. À la réception de `destination`, le téléphone démarre un
+nouveau document **seulement si `key` a changé** (une reconnexion ou un QR réaffiché
+ne vident rien) ; ce document contient déjà les pages 1 à `pages`, en cases sans
+miniature, que l'on peut toucher pour les mettre à jour. La prochaine photo est la
+page `pages + 1`.
 
 Anti-cache : le QR ouvre `…/Hone-web_scan/?v=<horodatage>#<session>`, une adresse
 neuve à chaque fois, et `index.html` recopie ce `?v=…` sur `style.css` et `main.js`.
