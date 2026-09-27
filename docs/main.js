@@ -6,6 +6,7 @@ const photo = document.getElementById("input_photo");
 const preview = document.getElementById("preview");
 const welcomeScreen = document.getElementById("screen-welcome");
 const errorMessage = document.getElementById("error-message");
+const expiredMessage = document.getElementById("expired-message");
 const sessionId = location.hash.slice(1);
 const retry = document.getElementById("error-retry");
 const home = document.getElementById("home");
@@ -32,25 +33,23 @@ const pageTitle = document.getElementById("page-title");
 const updatePage = document.getElementById("update-page");
 const updatePageLabel = document.getElementById("update-page-label");
 const closePage = document.getElementById("close-page");
-const DOC_KEY = `hone-doc:${sessionId}`; // un document par session Fragment (survit à un rechargement)
-const THUMB_WIDTH = 120; // px : assez pour une miniature nette, quelques Ko seulement
-
-
+const DOC_KEY = `hone-doc:${sessionId}`; // un document par session (survit à un rechargement)
+const THUMB_WIDTH = 120; // px
 
 let url = null;
 let stream = null;
 let socket = null;
 let currentPhoto = null;
 let pendingPhotoId = null;
-let doc = loadDoc();        // le document en cours : { id, pages: [{ page, thumb }] }, pages dans l'ordre
-const photos = new Map();   // page → la photo complète (Blob), en mémoire seulement : perdue au rechargement
-let rescanPage = null;      // la page qu'on est en train de remplacer, sinon null (= on ajoute une page)
-let viewedPage = null;      // la page affichée en grand depuis la colonne, sinon null
-let pendingSend = null;     // l'envoi en cours : { doc, page, replace, photo, thumb (Promise) }
-let originalPhoto = null; // la photo avant l'ajusteent de jscan
-let scanTicket = 0;
-let reconnectWhenVisible = false; // coupé pendant que l'onglet était caché : on se reconnectera à son retour
-let scannedPhoto = null; // la version scannée de la photo affichée, null si le scan n'a pas réussi
+let doc = loadDoc();        // { id, key, pages: [{ page, thumb }] }
+const photos = new Map();   // page → photo complète, en mémoire seulement
+let rescanPage = null;      // page en cours de remplacement, sinon null
+let viewedPage = null;      // page affichée depuis la colonne, sinon null
+let pendingSend = null;     // { doc, page, replace, photo, thumb (Promise) }
+let originalPhoto = null;   // la photo avant le scan
+let scannedPhoto = null;    // sa version scannée, null si le scan a échoué
+let scanTicket = 0;         // change à chaque nouvelle photo ou changement d'écran : un scan périmé est ignoré
+let reconnectWhenVisible = false; // coupé en arrière-plan : on se reconnecte au retour
 
 photo.addEventListener("change", () => {
     const file = photo.files[0];
@@ -75,36 +74,29 @@ photo.addEventListener("change", () => {
     showPhoto(file);
 });
 
-// Affiche une image (fichier importé ou photo prise) dans le viseur
+// Affiche la photo tout de suite, puis la remplace par sa version scannée
 async function showPhoto(image){
     setPreview(image);
-    // Une nouvelle photo, pas une page déjà envoyée : boutons « Envoyer / Changer de photo »
     welcomeScreen.classList.remove("has-page");
     viewedPage = null;
     updateSelection();
     welcomeScreen.classList.add("has-photo");
-    stopCamera(); // si la photo vient de la caméra, ou d'un import depuis le viseur
+    stopCamera();
     currentPhoto = image;
-    // « Ajouter la page 3 » ou « Remplacer la page 2 » : on voit où la photo va atterrir
-    sendPhotoLabel.textContent = sendLabel();
     originalPhoto = image;
-    // Nouvelle photo : pas encore de version scannée, donc rien à basculer
     scannedPhoto = null;
     useOriginal.hidden = true;
     sendPhoto.disabled = true;
-    sendPhotoLabel.textContent = "Scan… ";
+    sendPhotoLabel.textContent = "Scan…";
     const ticket = ++scanTicket;
-    // Le faisceau du viseur balaie la photo pendant le scan : on voit que ça travaille
-    welcomeScreen.classList.add("is-scanning");
+    welcomeScreen.classList.add("is-scanning"); // faisceau pendant le scan
     const scanned = await scanPhoto(image);
     if (ticket !== scanTicket) return;
     welcomeScreen.classList.remove("is-scanning");
 
     if (scanned !== null){
-        // Fondu + morphing de la photo brute vers la feuille recadrée (View Transitions)
         swapPreview(scanned);
         currentPhoto = scanned;
-        // Le scan a réussi : on propose de revenir à la photo brute
         scannedPhoto = scanned;
         useOriginal.textContent = "Original";
         useOriginal.hidden = false;
@@ -113,21 +105,17 @@ async function showPhoto(image){
     sendPhoto.disabled = socket?.readyState!==WebSocket.OPEN;
 }
 
-// Met une image dans le viseur : un Blob (photo) ou une URL (miniature enregistrée).
-// On libère l'URL du Blob précédent : les photos complètes, elles, restent dans `photos`.
+// Met un Blob ou une URL dans l'aperçu ; rien (null) cache l'aperçu
 function setPreview(source){
-    // D'abord libérer l'image précédente, dans tous les cas
     if (url != null){
         URL.revokeObjectURL(url);
         url = null;
     }
-    
     if (source == null){
         preview.hidden = true;
         preview.removeAttribute("src");
         return;
     }
-    // Une vraie image : on ré-affiche l'aperçu (il a pu être caché par une page sans image)
     preview.hidden = false;
     if (source instanceof Blob){
         url = URL.createObjectURL(source);
@@ -137,9 +125,6 @@ function setPreview(source){
         preview.src = source;
     }
 }
-
-
-
 
 // Applique un changement d'affichage avec la transition animée (si supportée)
 function withTransition(update){
@@ -151,9 +136,8 @@ function withTransition(update){
     }
 }
 
-// Change l'image de l'aperçu en fondu, avec un morphing de sa taille : la photo brute se
-// resserre vers la feuille recadrée. On attend que la nouvelle image soit décodée avant
-// que le navigateur en prenne la « photo » de fin, sinon le fondu partirait vers du vide.
+// Change l'aperçu en fondu (la photo se resserre vers la feuille recadrée).
+// On attend le décodage de la nouvelle image, sinon le fondu part vers du vide.
 function swapPreview(source){
     withTransition(async () => {
         setPreview(source);
@@ -172,14 +156,11 @@ function showScreen(id){
     withTransition(() => setScreen(id));
 }
 
-// Retour à l'accueil de base (Caméra / Importer), d'où qu'on vienne.
-// Par défaut on abandonne aussi la mise à jour en cours : la prochaine photo
-// s'ajoutera à la suite. `keepRescan` la garde (« Changer de photo » pendant
-// une mise à jour : on reprend la photo, mais toujours pour la même page).
+// Retour à l'accueil. Abandonne la mise à jour en cours, sauf `keepRescan`
+// (« Changer de photo » : on reprend la photo pour la même page).
 function goHome({ keepRescan = false } = {}){
-    // Un scan encore en cours ne doit pas remettre sa photo dans l'aperçu après notre départ
-    ++scanTicket;
-    welcomeScreen.classList.remove("is-scanning"); // le scan abandonné n'éteindra plus son faisceau
+    ++scanTicket; // un scan en cours ne doit plus toucher à l'aperçu
+    welcomeScreen.classList.remove("is-scanning");
     if (!keepRescan) setRescan(null);
     viewedPage = null;
     updateSelection();
@@ -201,8 +182,7 @@ function showError(message){
     showScreen("screen-error");
 }
 
-
-// (Des fonctions fléchées : sinon goHome recevrait l'événement du clic comme options)
+// Fonctions fléchées : sinon goHome recevrait l'événement du clic comme options
 retry.addEventListener("click", () => goHome());
 home.addEventListener("click", () => goHome());
 
@@ -217,11 +197,9 @@ async function startCamera(button) {
                 width: { ideal: 3840 },  // l'appareil donne le max qu'il peut (4K si possible)
                 height: { ideal: 2160 },
             },
- 
             audio: false,
         });
         video.srcObject = stream;
-        // si on vient de « Changer de photo » ou d'une page rouverte (« Mettre à jour »)
         welcomeScreen.classList.remove("has-photo", "has-page");
         welcomeScreen.classList.add("has-camera");
     } catch (err) {
@@ -256,13 +234,12 @@ shutter.addEventListener("click", () => {
     // La vidéo n'a pas encore reçu d'image : rien à capturer
     if (video.videoWidth === 0) return;
 
-    // On dessine l'image actuelle de la vidéo dans un canvas à sa taille réelle
+    // L'image actuelle de la vidéo, à sa taille réelle
     const canvas = document.createElement("canvas");
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
     canvas.getContext("2d").drawImage(video, 0, 0);
 
-    
     canvas.toBlob((blob) => {
         if (blob == null) {
             showError("Impossible de prendre la photo.");
@@ -275,8 +252,7 @@ shutter.addEventListener("click", () => {
 
 function connectRelay(){
     socket = new WebSocket(`${RELAY_URL}/session/${sessionId}?role=phone`);
-    
-    socket.onopen = () => console.log("Connecté au relais");
+
     socket.onmessage = (event) => {
         const message = JSON.parse(event.data);
         if (message.type === "peer" && message.role === "desktop"){
@@ -291,35 +267,25 @@ function connectRelay(){
         else if(message.type === "destination"){
             applyDestination(message.key, message.pages);
         }
-
     };
     socket.onclose = (event) => {
-        setFragmentConnected(false); 
+        setFragmentConnected(false);
         if (event.code === 4404){
             showError("Ce lien a expiré. Rescanne le QR code depuis Fragment.");
         }
-        else if(event.code === 4409){
-            document.getElementById("expired-message").textContent ="Cette session Fragment est fermée. Rescanne le QR code depuis Fragment pour continuer.";
-
-            showScreen("screen-expired");
-        }
-        else if(event.code ===4001){
-            document.getElementById("expired-message").textContent = "Le scan a été ouvert dans un autre onglet. Tu peux fermer celui-ci.";
+        else if(event.code === 4001){
+            // Un autre onglet a pris la session : ne pas se reconnecter, sinon ils s'éjectent en boucle
+            expiredMessage.textContent = "Le scan a été ouvert dans un autre onglet. Tu peux fermer celui-ci.";
             showScreen("screen-expired");
         }
         else{
-            // Coupure réseau (ou code inconnu) : on se reconnecte, mais seulement si l'onglet est
-            // visible. Un onglet en arrière-plan (Safari endormi) qui se reconnecterait tout seul
-            // éjecterait l'onglet qu'on est en train d'utiliser (le relais garde le dernier arrivé).
+            // Coupure réseau : on se reconnecte, mais pas en arrière-plan (on éjecterait l'onglet utilisé)
             setTimeout(reconnectIfVisible, 2000);
         }
     };
-
 }
 
-// Reconnecte tout de suite si l'onglet est visible ; sinon, on attend qu'il le redevienne
-// (le listener « visibilitychange » plus bas s'en charge). Revérifié au moment du rappel :
-// l'onglet a pu passer en arrière-plan pendant les 2 secondes d'attente.
+// Revérifié au rappel : l'onglet a pu passer en arrière-plan pendant l'attente
 function reconnectIfVisible(){
     if (document.visibilityState === "visible") connectRelay();
     else reconnectWhenVisible = true;
@@ -338,13 +304,11 @@ function setFragmentConnected(connected, label = "Fragment non connecté"){
     frag_status_text.textContent = connected ? "Connecté à Fragment" : label;
     frag_status.classList.toggle("is-offline", !connected);
     sendPhoto.disabled = !connected;
-    newDoc.disabled = !connected; // Fragment doit être là pour savoir qu'on change de note
+    newDoc.disabled = !connected;
 }
-
 
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopCamera();
-    // L'onglet revient au premier plan après une coupure : c'est lui qu'on utilise, il reprend la main
     else if (reconnectWhenVisible){
         reconnectWhenVisible = false;
         connectRelay();
@@ -356,14 +320,12 @@ sendPhoto.addEventListener("click", () => {
     if (!currentPhoto || socket?.readyState !== WebSocket.OPEN ) return;
 
     const photoId = crypto.randomUUID();
-    sendPhoto.disabled = true;                 // pas de double envoi
+    sendPhoto.disabled = true; // pas de double envoi
     sendPhotoLabel.textContent = "Envoi…";
     pendingPhotoId = photoId;
-    // Où va cette photo : la page qu'on met à jour, sinon une nouvelle page à la suite.
-    // C'est le téléphone qui numérote : il est le seul à voir toutes les pages.
+    // C'est le téléphone qui numérote : la page mise à jour, sinon la suivante
     const replace = rescanPage !== null;
     const page = replace ? rescanPage : nextPage();
-    // La miniature se prépare pendant l'envoi ; on range tout à l'accusé de réception
     pendingSend = { doc: doc.id, page, replace, photo: currentPhoto, thumb: makeThumb(currentPhoto) };
 
     socket.send(JSON.stringify({
@@ -371,11 +333,10 @@ sendPhoto.addEventListener("click", () => {
         id: photoId,
         mime: currentPhoto.type || "image/jpeg",
         size: currentPhoto.size,
-        doc: doc.id,   // le document (= la note) auquel appartient la page
-        page,          // son numéro : 1, 2, 3… dans l'ordre des envois
-        replace,       // true = remplacer cette page, false = l'ajouter à la suite
+        doc: doc.id,
+        page,
+        replace,
     }));
-
 
     for (let offset = 0; offset < currentPhoto.size; offset += CHUNK_SIZE) {
         socket.send(currentPhoto.slice(offset, offset + CHUNK_SIZE));
@@ -384,16 +345,15 @@ sendPhoto.addEventListener("click", () => {
     socket.send(JSON.stringify({ type: "photo-end", id: photoId }));
 });
 
-// « Scanner la page N » : on enchaîne, la caméra s'ouvre directement (sans repasser par Caméra / Importer)
+// « Scanner la page N » : la caméra s'ouvre directement
 sent_again.addEventListener("click", () => {
     withTransition(() => {
         welcomeScreen.classList.remove("has-photo", "has-page");
         setScreen("screen-welcome");
     });
-    startCamera(sent_again); // si l'accès est refusé : l'écran d'erreur, comme depuis l'accueil
+    startCamera(sent_again);
 });
 
-// « Retour » : l'accueil, pour importer une photo, rouvrir une page ou changer de document
 sentBack.addEventListener("click", () => goHome());
 
 expired_retry.addEventListener("click", () => {
@@ -403,24 +363,16 @@ expired_retry.addEventListener("click", () => {
 
 
 /* ---------- Les pages du document ---------- */
-// Un « document » = une suite de pages qui formeront UNE note dans Fragment (puis un PDF).
-// Chaque photo envoyée s'ajoute à la suite : page 1, puis 2, puis 3… Rien n'est une
-// mise à jour d'une autre page, sauf si on le demande :
-//   - toucher une miniature de la colonne affiche cette page en grand ;
-//   - « Mettre à jour la page N » reprend une photo qui REMPLACERA la page N, et elle seule ;
-//   - « Nouveau » (en haut de la colonne) commence un autre document, donc une autre note.
-// Chaque photo part avec { doc, page, replace } : Fragment n'a qu'à ranger la page N
-// du document `doc` dans sa note, à la suite ou à la place de l'ancienne.
+// Un document = une suite de pages = un PDF dans Fragment. Chaque photo part avec
+// { doc, page, replace } : ajoutée à la suite, ou à la place de la page N.
 
-// Le document est gardé dans le sessionStorage : un rechargement de la page ne le perd pas.
-// Seules les miniatures y sont (quelques Ko chacune) ; les photos complètes sont trop
-// lourdes et restent en mémoire (`photos`).
+// Le document (et ses miniatures) survit à un rechargement ; les photos complètes non.
 function loadDoc(){
     try {
         const saved = JSON.parse(sessionStorage.getItem(DOC_KEY));
         if (saved && typeof saved.id === "string" && Array.isArray(saved.pages)) return saved;
     } catch {
-        // stockage bloqué ou contenu illisible : on repart d'un document vide
+        // stockage bloqué ou illisible : document vide
     }
     return { id: crypto.randomUUID(), key: null, pages: [] };
 }
@@ -429,21 +381,19 @@ function saveDoc(){
     try {
         sessionStorage.setItem(DOC_KEY, JSON.stringify(doc));
     } catch {
-        // stockage plein ou bloqué : la colonne marche quand même, jusqu'au rechargement
+        // stockage plein ou bloqué : la colonne marche jusqu'au rechargement
     }
 }
 
-// Le numéro de la prochaine page ajoutée à la suite
 function nextPage(){
     return doc.pages.reduce((max, p) => Math.max(max, p.page), 0) + 1;
 }
 
-// Le texte du bouton d'envoi : on voit où la photo va atterrir
 function sendLabel(){
     return rescanPage === null ? `Ajouter la page ${nextPage()}` : `Remplacer la page ${rescanPage}`;
 }
 
-// Une petite copie JPEG de la photo, en data URL (null si le navigateur ne sait pas la décoder)
+// Petite copie JPEG en data URL (null si l'image n'est pas décodable)
 async function makeThumb(image){
     try {
         const bitmap = await createImageBitmap(image);
@@ -458,7 +408,7 @@ async function makeThumb(image){
     }
 }
 
-// Fragment a bien reçu la photo : on range la page (miniature + photo) et on adapte « Envoyé »
+// Fragment a reçu la photo : on range la page et on prépare l'écran « Envoyé »
 async function photoReceived(){
     const send = pendingSend;
     pendingSend = null;
@@ -468,14 +418,13 @@ async function photoReceived(){
     sentLead.textContent = send.replace
         ? "Elle remplace l'ancienne version de cette page dans ta note."
         : "Elle s'ajoute à la suite de ta note dans Fragment.";
-    setRescan(null); // la mise à jour est faite : la prochaine photo repart à la suite
-    // Le bouton pour enchaîner annonce la page suivante (celle-ci n'est pas encore dans doc.pages)
+    setRescan(null);
+    // La page suivante (celle-ci n'est pas encore dans doc.pages)
     const next = send.replace ? nextPage() : Math.max(nextPage(), send.page + 1);
     sentAgainLabel.textContent = `Scanner la page ${next}`;
 
     const thumb = await send.thumb;
-    // Pendant l'attente de la miniature, on a pu passer à un nouveau document : on ne mélange pas
-    if (send.doc !== doc.id) return;
+    if (send.doc !== doc.id) return; // on est passé à un autre document entre-temps
     photos.set(send.page, send.photo);
     const existing = doc.pages.find((p) => p.page === send.page);
     if (existing) existing.thumb = thumb ?? existing.thumb;
@@ -513,7 +462,7 @@ function renderPages(fresh = null){
     updateSelection();
 }
 
-// Entoure dans la colonne la page affichée en grand, ou celle qu'on est en train de remplacer
+// Entoure la page affichée, ou celle en cours de remplacement
 function updateSelection(){
     const selected = viewedPage ?? rescanPage;
     historyList.querySelectorAll(".thumb").forEach((button) => {
@@ -523,7 +472,7 @@ function updateSelection(){
     });
 }
 
-// Démarre (page) ou abandonne (null) le remplacement d'une page : bandeau, bouton d'envoi, colonne
+// Démarre (page) ou abandonne (null) le remplacement d'une page
 function setRescan(page){
     rescanPage = page;
     rescan.hidden = page === null;
@@ -532,13 +481,11 @@ function setRescan(page){
     updateSelection();
 }
 
-// Toucher une miniature : afficher cette page en grand, comme une photo qu'on vient de prendre.
-// La toucher à nouveau referme l'affichage.
+// Affiche une page de la colonne en grand ; la retoucher referme
 function openPage(page){
-    if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas d'écran
-    // Même raison que dans goHome : le scan en cours ne doit pas écraser la page affichée
-    ++scanTicket;
-    welcomeScreen.classList.remove("is-scanning"); // pas de faisceau sur une page déjà envoyée
+    if (pendingPhotoId !== null) return; // envoi en cours
+    ++scanTicket; // le scan en cours ne doit pas écraser la page affichée
+    welcomeScreen.classList.remove("is-scanning");
     if (viewedPage === page && !welcomeScreen.hidden){
         goHome();
         return;
@@ -546,10 +493,10 @@ function openPage(page){
     const saved = doc.pages.find((p) => p.page === page);
     withTransition(() => {
         stopCamera();
-        setRescan(null); // on regarde une page : aucune mise à jour n'est lancée pour l'instant
+        setRescan(null);
         viewedPage = page;
         currentPhoto = null; // rien à envoyer depuis cet écran
-        // La photo complète si on l'a encore, sinon (après un rechargement) sa miniature
+        // La photo complète, sinon sa miniature, sinon rien (page d'un PDF repris)
         setPreview(photos.get(page) ?? saved?.thumb);
         pageTitle.textContent = `Page ${page}`;
         updatePageLabel.textContent = `Mettre à jour la page ${page}`;
@@ -559,13 +506,13 @@ function openPage(page){
     });
 }
 
-// « Mettre à jour la page N » : on ouvre la caméra, et la photo prise remplacera la page N
+// La photo prise remplacera la page affichée
 updatePage.addEventListener("click", () => {
     const page = viewedPage;
     if (page === null) return;
     viewedPage = null;
     setRescan(page);
-    startCamera(updatePage); // en cas d'échec, l'écran d'erreur ; « Importer » reste possible depuis la caméra
+    startCamera(updatePage);
 });
 
 closePage.addEventListener("click", () => goHome());
@@ -577,252 +524,16 @@ newDoc.addEventListener("click", () => {
     if (doc.pages.length > 0 && !confirm("Commencer un nouveau document ? La prochaine photo ouvrira une nouvelle note, et ces miniatures seront effacées.")) return;
     doc = { id: crypto.randomUUID(), key: doc.key, pages: [] };
     photos.clear();
-    // Prévient Fragment tout de suite (il peut fermer la note en cours) ; chaque photo
-    // porte de toute façon son `doc`, donc ce message n'est pas indispensable.
-    socket.send(JSON.stringify({ type: "doc-new", doc: doc.id, key: doc.key }));
+    // Fragment repasse sur un dossier s'il écrivait dans un PDF repris
+    socket.send(JSON.stringify({ type: "doc-new", doc: doc.id }));
     saveDoc();
     renderPages();
     goHome();
 });
 renderPages();
 
-function scannerReady(){
-    return (typeof cv !== "undefined" && typeof cv.Mat === "function" && typeof jscanify !== "undefined");
-}
-
-
-let scanner = null;
-
-// Le scanner s'il est prêt, sinon null. Null = on envoie la photo telle quelle :
-// le scan ne doit jamais bloquer ni retarder l'envoi (OpenCV peut encore charger).
-function getScanner(){
-    if (!scannerReady()) return null;
-    if (scanner === null) scanner = new jscanify();
-    return scanner;
-}
-
-
-async function detectCorners(photo){
-    const s = getScanner();
-
-    if (s=== null){ return null;}
-    let bitmap;
-    try{
-        bitmap = await createImageBitmap(photo)
-    }
-    catch { return null;}
-    // Un canvas veut une taille en pixels entiers
-    const hauteur = Math.round(800 * bitmap.height / bitmap.width);
-    const largeur = 800;
-    const canvas = document.createElement("canvas");
-    canvas.width = largeur;
-    canvas.height = hauteur;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, largeur, hauteur);
-    // Lue avant close(), qui la remet à 0
-    const vraieLargeur = bitmap.width;
-    let mat;
-    let contour;
-    let coins;
-    let approx;
-    try{
-        mat = cv.imread(canvas);
-        if (mat){
-            // Le contour de jscanify (par les bords : il suit bien la feuille), débarrassé de
-            // ses petits pics par smoothContour. Si le lissage échoue, on garde le contour brut.
-            const brut = s.findPaperContour(mat);
-            const lisse = brut ? smoothContour(brut, mat) : null;
-            if (lisse) { brut.delete(); contour = lisse; }
-            else { contour = brut; }
-        }
-        approx = new cv.Mat();
-        if (contour) {
-            // Du plus précis (1 % du périmètre) au plus tolérant (5 %) : le premier qui donne 4 points gagne
-            const perimetre = cv.arcLength(contour, true);
-            for (let e = 0.01; e <= 0.05 && coins === undefined; e += 0.005) {
-                approx.delete();                 // on repart d'une matrice vide à chaque essai
-                approx = new cv.Mat();
-                cv.approxPolyDP(contour, approx, e * perimetre, true);
-                if (approx.rows === 4) coins = ordonnerCoins(approx);
-            }
-            // Aucun écart n'a donné 4 points : l'ancienne méthode de jscanify
-            if (coins === undefined) coins = s.getCornerPoints(contour);
-        }
-    }
-
-    
-    // Une erreur d'OpenCV = pas de feuille trouvée : la photo partira telle quelle
-    catch { return null; }
-    finally{
-        if (contour){contour.delete()};
-        if (mat){mat.delete()};
-        if (approx) approx.delete();
-        // Dans le finally : libérée même si OpenCV a planté
-        bitmap.close();
-    }
-
-    if (!coins) return null;
-
-    const {topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd} = coins;
-    
-    if(!hg || !hd || !bg || !bd) return null;
-    const surface = Math.hypot(hd.x - hg.x, hd.y - hg.y) * Math.hypot(bg.x - hg.x, bg.y - hg.y);
-    if (surface < 0.2 * largeur * hauteur) return null;
-
-    const f = vraieLargeur / largeur;
-    const agrandir = (p) => ({ x: p.x * f, y: p.y * f });
-
-    return {
-        topLeftCorner : agrandir(hg),
-        topRightCorner: agrandir(hd),
-        bottomLeftCorner: agrandir(bg),
-        bottomRightCorner: agrandir(bd),
-        
-    };
-
-
-}
-
-// Renvoie une cv.Mat à libérer par l'appelant, ou null (on garde alors le contour brut).
-function smoothContour(contour, mat){
-    let masque = null, liste = null, noyau = null, contours = null, hierarchie = null;
-    try {
-        // 1. La silhouette : épaisseur -1 = « rempli »
-        masque = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
-        liste = new cv.MatVector();
-        liste.push_back(contour);
-        cv.drawContours(masque, liste, 0, new cv.Scalar(255), -1);
-
-        //On efface les pics
-        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(21, 21));
-        cv.morphologyEx(masque, masque, cv.MORPH_OPEN, noyau);
-
-        // 3. Le plus grand contour extérieur de la silhouette propre
-        contours = new cv.MatVector();
-        hierarchie = new cv.Mat();
-        cv.findContours(masque, contours, hierarchie, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-        let meilleur = -1;
-        let aireMax = 0;
-        for (let i = 0; i < contours.size(); i++){
-            const c = contours.get(i);
-            const aire = cv.contourArea(c);
-            c.delete();
-            if (aire > aireMax){ aireMax = aire; meilleur = i; }
-        }
-        if (meilleur === -1) return null;
-
-        // Une copie, qui survit au delete() de `contours` dans le finally
-        const trouve = contours.get(meilleur);
-        const copie = trouve.clone();
-        trouve.delete();
-        return copie;
-    }
-    // Une erreur d'OpenCV : on garde le contour brut
-    catch { return null; }
-    finally {
-        for (const m of [masque, liste, noyau, contours, hierarchie]) if (m) m.delete();
-    }
-}
-
-function ordonnerCoins(approx){
-    // data32S = [x1, y1, x2, y2, x3, y3, x4, y4] (des entiers : approxPolyDP rend des points entiers)
-    const d = approx.data32S;
-    const points = [0, 2, 4, 6].map((i) => ({ x: d[i], y: d[i + 1] }));
-
-    const le = (mesure, plusGrand) => points.reduce((garde, p) =>
-        (plusGrand ? mesure(p) > mesure(garde) : mesure(p) < mesure(garde)) ? p : garde);
-
-    return {
-        topLeftCorner: le((p) => p.x + p.y, false),     
-        bottomRightCorner: le((p) => p.x + p.y, true),  
-        topRightCorner: le((p) => p.y - p.x, false),   
-        bottomLeftCorner: le((p) => p.y - p.x, true),   
-    };
-}
-
-async function straighten(photo, coins){
-    const s = getScanner();
-    // Pas de coins (étape 2 a renvoyé null) : rien à redresser
-    if (s === null || coins === null){ return null;}
-
-    let bitmap;
-    try {
-        bitmap = await createImageBitmap(photo);
-    }
-    catch{ return null;}
-    const canvas = document.createElement("canvas");
-    // Sans ça, le canvas garde sa taille par défaut (300 × 150) et la photo serait coupée
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    canvas.getContext("2d").drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
-    bitmap.close();
-
-    // Taille de la feuille à plat : moyenne des bords opposés, sinon elle sortirait étirée
-    const { topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd } = coins;
-    const bord = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
-    let largeur = (bord(hg, hd) + bord(bg, bd)) / 2;
-    let hauteur = (bord(hg, bg) + bord(hd, bd)) / 2;
-    const k = Math.min(1, 2000 / Math.max(largeur, hauteur));
-    largeur = Math.round(largeur * k);
-    hauteur = Math.round(hauteur * k);
-
-    // Nos coins en 4ᵉ argument : extractPaper ne recherche pas la feuille une deuxième fois
-    try {
-        return s.extractPaper(canvas, largeur, hauteur, coins);
-    }
-    // Une erreur d'OpenCV ne doit pas bloquer l'envoi : la photo partira telle quelle
-    catch { return null; }
-}
-
-// Synchrone : OpenCV calcule tout de suite, il n'y a rien à attendre
-function cleanUp(canvas){
-    // Déclarées avant le try pour que le finally puisse toutes les libérer
-    let src = null, gris = null, petit = null, noyau = null, fond = null, net = null;
-    try {
-        src = cv.imread(canvas);
-        gris = new cv.Mat(); cv.cvtColor(src, gris, cv.COLOR_RGBA2GRAY);
-
-        petit = new cv.Mat();
-        cv.resize(gris, petit, new cv.Size(Math.round(gris.cols/8),  Math.round(gris.rows/8)), 0, 0, cv.INTER_AREA);
-        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5,5));
-        cv.dilate(petit, petit, noyau);
-
-        cv.GaussianBlur(petit, petit, new cv.Size(15,15), 0);
-        fond = new cv.Mat(); cv.resize(petit, fond, new cv.Size(gris.cols, gris.rows), 0, 0, cv.INTER_LINEAR);
-        net = new cv.Mat(); cv.divide(gris, fond, net, 255);
-        const a = 2;
-        net.convertTo(net, -1, a, 255 * (1 - a));
-
-        cv.imshow(canvas, net);
-        return canvas;
-    }
-    // Une erreur d'OpenCV : on garde la feuille redressée, juste sans l'effet scan
-    catch { return canvas; }
-    // OpenCV.js ne libère rien tout seul : 6 matrices, dont plusieurs à 2000 px
-    finally {
-        for (const m of [src, gris, petit, noyau, fond, net]) if (m) m.delete();
-    }
-}
-
-async function scanPhoto(photo){
-    const coins = await detectCorners(photo);
-    if (coins === null) return null;
-    const canvas = await straighten(photo, coins);
-    if (canvas === null) return null;
-    const cleanedCanvas = cleanUp(canvas);
-
-    return new Promise((resolve) => cleanedCanvas.toBlob(resolve, "image/jpeg", 0.85));
-
-}
-
-// « Original » ↔ « Version scannée » : c'est la photo affichée qui partira à l'envoi
-useOriginal.addEventListener("click", () => {
-    if (originalPhoto === null || scannedPhoto === null) return;
-    const toOriginal = currentPhoto !== originalPhoto;
-    currentPhoto = toOriginal ? originalPhoto : scannedPhoto;
-    swapPreview(currentPhoto); // le même fondu que l'arrivée du scan, dans les deux sens
-    useOriginal.textContent = toOriginal ? "Version scannée" : "Original";
-});
-
+// Destination choisie dans Fragment : nouveau document seulement si elle a changé,
+// avec les pages déjà présentes dans le PDF (sans miniature)
 function applyDestination(key, pages){
     if (key === doc.key){
         return;
@@ -836,5 +547,300 @@ function applyDestination(key, pages){
     saveDoc();
     renderPages();
     goHome();
+}
 
+// « Original » ↔ « Version scannée » : la photo affichée est celle qui partira
+useOriginal.addEventListener("click", () => {
+    if (originalPhoto === null || scannedPhoto === null) return;
+    const toOriginal = currentPhoto !== originalPhoto;
+    currentPhoto = toOriginal ? originalPhoto : scannedPhoto;
+    swapPreview(currentPhoto);
+    useOriginal.textContent = toOriginal ? "Version scannée" : "Original";
+});
+
+
+/* ---------- Le scan (OpenCV + jscanify) ---------- */
+// Photo → coins de la feuille → feuille redressée → effet scan → JPEG.
+// Un échec à n'importe quelle étape renvoie null : la photo brute part telle quelle.
+
+function scannerReady(){
+    return (typeof cv !== "undefined" && typeof cv.Mat === "function" && typeof jscanify !== "undefined");
+}
+
+let scanner = null;
+
+// null tant qu'OpenCV charge : le scan ne bloque jamais l'envoi
+function getScanner(){
+    if (!scannerReady()) return null;
+    if (scanner === null) scanner = new jscanify();
+    return scanner;
+}
+
+async function scanPhoto(photo){
+    const coins = await detectCorners(photo);
+    if (coins === null) return null;
+    const canvas = await straighten(photo, coins);
+    if (canvas === null) return null;
+    const cleanedCanvas = cleanUp(canvas);
+
+    return new Promise((resolve) => cleanedCanvas.toBlob(resolve, "image/jpeg", 0.85));
+}
+
+// Les 4 coins de la feuille, en pixels de la vraie photo (cherchés sur une copie de 800 px)
+async function detectCorners(photo){
+    const s = getScanner();
+    if (s === null) return null;
+
+    let bitmap;
+    try{
+        bitmap = await createImageBitmap(photo)
+    }
+    catch { return null;}
+    const hauteur = Math.round(800 * bitmap.height / bitmap.width);
+    const largeur = 800;
+    const canvas = document.createElement("canvas");
+    canvas.width = largeur;
+    canvas.height = hauteur;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, largeur, hauteur);
+    const vraieLargeur = bitmap.width; // lue avant close(), qui la remet à 0
+    let mat;
+    let contour;
+    let coins;
+    let approx;
+    try{
+        mat = cv.imread(canvas);
+        // 1. Notre recherche : plusieurs contours essayés (tient la perspective)
+        coins = findPaperQuad(mat)?.coins;
+        // 2. Secours : le contour de jscanify, débarrassé de ses pics
+        if (!coins){
+            const brut = s.findPaperContour(mat);
+            const lisse = brut ? smoothContour(brut, mat) : null;
+            if (lisse) { brut.delete(); contour = lisse; }
+            else { contour = brut; }
+        }
+        approx = new cv.Mat();
+        if (contour) {
+            // Le quadrilatère le plus précis (1 % à 5 % du périmètre)
+            const perimetre = cv.arcLength(contour, true);
+            for (let e = 0.01; e <= 0.05 && coins === undefined; e += 0.005) {
+                approx.delete();
+                approx = new cv.Mat();
+                cv.approxPolyDP(contour, approx, e * perimetre, true);
+                if (approx.rows === 4) coins = ordonnerCoins(approx);
+            }
+            // Pas de quadrilatère : l'ancienne méthode de jscanify
+            if (coins === undefined) coins = s.getCornerPoints(contour);
+        }
+    }
+    catch { return null; }
+    finally{
+        if (contour){contour.delete()};
+        if (mat){mat.delete()};
+        if (approx) approx.delete();
+        bitmap.close(); // même si OpenCV a planté
+    }
+
+    if (!coins) return null;
+
+    const {topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd} = coins;
+    if(!hg || !hd || !bg || !bd) return null;
+    // Collé au cadre : c'est le tour de la photo, pas la feuille
+    if (colleAuxBords(coins, largeur, hauteur)) return null;
+    // Moins de 20 % de l'image : ce n'est pas la feuille
+    const surface = Math.hypot(hd.x - hg.x, hd.y - hg.y) * Math.hypot(bg.x - hg.x, bg.y - hg.y);
+    if (surface < 0.2 * largeur * hauteur) return null;
+
+    const f = vraieLargeur / largeur;
+    const agrandir = (p) => ({ x: p.x * f, y: p.y * f });
+
+    return {
+        topLeftCorner : agrandir(hg),
+        topRightCorner: agrandir(hd),
+        bottomLeftCorner: agrandir(bg),
+        bottomRightCorner: agrandir(bd),
+    };
+}
+
+// Comme les applis de scan : on essaie les 5 plus grands contours, pas seulement le plus
+// grand (en perspective, c'est souvent le cadre de la photo). Renvoie { coins } ou null.
+function findPaperQuad(mat){
+    let gris = null, bords = null, noyau = null, contours = null, hierarchie = null;
+    try {
+        gris = new cv.Mat();
+        cv.cvtColor(mat, gris, cv.COLOR_RGBA2GRAY);
+        cv.GaussianBlur(gris, gris, new cv.Size(5, 5), 0);
+
+        // Seuils bas : le bord lointain d'une feuille en biais est faible
+        bords = new cv.Mat();
+        cv.Canny(gris, bords, 30, 100);
+
+        // Referme les bords en pointillés
+        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+        cv.dilate(bords, bords, noyau);
+
+        // RETR_LIST : aussi les contours intérieurs (la feuille dans le cadre de la table)
+        contours = new cv.MatVector();
+        hierarchie = new cv.Mat();
+        cv.findContours(bords, contours, hierarchie, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+        const tailles = [];
+        for (let i = 0; i < contours.size(); i++){
+            const c = contours.get(i);
+            tailles.push({ i, aire: cv.contourArea(c) });
+            c.delete();
+        }
+        tailles.sort((a, b) => b.aire - a.aire);
+
+        // Le premier quadrilatère convexe, assez grand, qui ne colle pas au cadre
+        const aireImage = mat.rows * mat.cols;
+        for (const { i, aire } of tailles.slice(0, 5)){
+            if (aire < 0.15 * aireImage) break; // triés : les suivants sont plus petits
+            const c = contours.get(i);
+            const coins = quadrilatere(c);
+            c.delete();
+            if (coins && !colleAuxBords(coins, mat.cols, mat.rows)) return { coins };
+        }
+        return null;
+    }
+    catch { return null; }
+    finally {
+        for (const m of [gris, bords, noyau, contours, hierarchie]) if (m) m.delete();
+    }
+}
+
+// Le contour simplifié en quadrilatère convexe, le plus précis possible ; sinon null
+function quadrilatere(contour){
+    const perimetre = cv.arcLength(contour, true);
+    for (let e = 0.01; e <= 0.05; e += 0.005){
+        const approx = new cv.Mat();
+        try {
+            cv.approxPolyDP(contour, approx, e * perimetre, true);
+            if (approx.rows === 4 && cv.isContourConvex(approx)) return ordonnerCoins(approx);
+        }
+        finally { approx.delete(); }
+    }
+    return null;
+}
+
+// Au moins 2 coins à moins de 2 % du bord de l'image
+function colleAuxBords(coins, largeur, hauteur){
+    const marge = 0.02 * Math.max(largeur, hauteur);
+    const pres = (p) => p.x < marge || p.y < marge || p.x > largeur - 1 - marge || p.y > hauteur - 1 - marge;
+    return [coins.topLeftCorner, coins.topRightCorner, coins.bottomLeftCorner, coins.bottomRightCorner]
+        .filter((p) => p && pres(p)).length >= 2;
+}
+
+// Efface les « pics » du contour de jscanify (le veinage du bois) : on remplit la
+// silhouette, une ouverture 21 px gomme ce qui est plus fin, on reprend le contour.
+// Renvoie une cv.Mat à libérer par l'appelant, ou null.
+function smoothContour(contour, mat){
+    let masque = null, liste = null, noyau = null, contours = null, hierarchie = null;
+    try {
+        masque = cv.Mat.zeros(mat.rows, mat.cols, cv.CV_8UC1);
+        liste = new cv.MatVector();
+        liste.push_back(contour);
+        cv.drawContours(masque, liste, 0, new cv.Scalar(255), -1); // -1 = rempli
+
+        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(21, 21));
+        cv.morphologyEx(masque, masque, cv.MORPH_OPEN, noyau);
+
+        contours = new cv.MatVector();
+        hierarchie = new cv.Mat();
+        cv.findContours(masque, contours, hierarchie, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        let meilleur = -1;
+        let aireMax = 0;
+        for (let i = 0; i < contours.size(); i++){
+            const c = contours.get(i);
+            const aire = cv.contourArea(c);
+            c.delete();
+            if (aire > aireMax){ aireMax = aire; meilleur = i; }
+        }
+        if (meilleur === -1) return null;
+
+        // Une copie, qui survit au delete() de `contours`
+        const trouve = contours.get(meilleur);
+        const copie = trouve.clone();
+        trouve.delete();
+        return copie;
+    }
+    catch { return null; }
+    finally {
+        for (const m of [masque, liste, noyau, contours, hierarchie]) if (m) m.delete();
+    }
+}
+
+// Range 4 points quelconques en haut-gauche / haut-droit / bas-gauche / bas-droit
+// (feuille tournée de moins de 45°)
+function ordonnerCoins(approx){
+    const d = approx.data32S; // [x1, y1, x2, y2, …]
+    const points = [0, 2, 4, 6].map((i) => ({ x: d[i], y: d[i + 1] }));
+
+    const le = (mesure, plusGrand) => points.reduce((garde, p) =>
+        (plusGrand ? mesure(p) > mesure(garde) : mesure(p) < mesure(garde)) ? p : garde);
+
+    return {
+        topLeftCorner: le((p) => p.x + p.y, false),
+        bottomRightCorner: le((p) => p.x + p.y, true),
+        topRightCorner: le((p) => p.y - p.x, false),
+        bottomLeftCorner: le((p) => p.y - p.x, true),
+    };
+}
+
+// La feuille à plat, en pleine résolution (2000 px max)
+async function straighten(photo, coins){
+    const s = getScanner();
+    if (s === null || coins === null) return null;
+
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(photo);
+    }
+    catch{ return null;}
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width; // sinon 300 × 150 par défaut
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
+    bitmap.close();
+
+    // Taille : moyenne des bords opposés
+    const { topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd } = coins;
+    const bord = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+    let largeur = (bord(hg, hd) + bord(bg, bd)) / 2;
+    let hauteur = (bord(hg, bg) + bord(hd, bd)) / 2;
+    const k = Math.min(1, 2000 / Math.max(largeur, hauteur));
+    largeur = Math.round(largeur * k);
+    hauteur = Math.round(hauteur * k);
+
+    try {
+        return s.extractPaper(canvas, largeur, hauteur, coins);
+    }
+    catch { return null; }
+}
+
+// Effet scan : papier blanc (division par la lumière du fond), encre plus noire
+function cleanUp(canvas){
+    let src = null, gris = null, petit = null, noyau = null, fond = null, net = null;
+    try {
+        src = cv.imread(canvas);
+        gris = new cv.Mat(); cv.cvtColor(src, gris, cv.COLOR_RGBA2GRAY);
+
+        // La lumière du papier : copie réduite, encre effacée (dilatation), floutée
+        petit = new cv.Mat();
+        cv.resize(gris, petit, new cv.Size(Math.round(gris.cols/8),  Math.round(gris.rows/8)), 0, 0, cv.INTER_AREA);
+        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5,5));
+        cv.dilate(petit, petit, noyau);
+        cv.GaussianBlur(petit, petit, new cv.Size(15,15), 0);
+        fond = new cv.Mat(); cv.resize(petit, fond, new cv.Size(gris.cols, gris.rows), 0, 0, cv.INTER_LINEAR);
+
+        net = new cv.Mat(); cv.divide(gris, fond, net, 255);
+        // Contraste : le blanc reste à 255, les gris sont tirés vers le noir
+        const a = 2;
+        net.convertTo(net, -1, a, 255 * (1 - a));
+
+        cv.imshow(canvas, net);
+        return canvas;
+    }
+    catch { return canvas; } // la feuille redressée, sans l'effet scan
+    finally {
+        for (const m of [src, gris, petit, noyau, fond, net]) if (m) m.delete();
+    }
 }
