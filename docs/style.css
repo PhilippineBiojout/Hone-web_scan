@@ -37,6 +37,9 @@ html { -webkit-text-size-adjust: 100%; }
 [hidden] { display: none !important; }
 
 body {
+  /* Une colonne : la barre du haut (commune), puis l'écran visible qui prend le reste */
+  display: flex;
+  flex-direction: column;
   min-height: 100dvh;
   background:
     radial-gradient(120% 60% at 50% -10%, var(--accent-soft), transparent 60%),
@@ -65,20 +68,24 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 28px;
-  min-height: 100dvh;
+  flex: 1; /* toute la hauteur sous la barre du haut (body est une colonne flex) */
+  width: 100%; /* sinon, en colonne flex, margin: auto réduirait l'écran à son contenu */
   max-width: 440px;
   margin: 0 auto;
-  padding:
-    calc(16px + env(safe-area-inset-top))
-    20px
-    calc(20px + env(safe-area-inset-bottom));
+  /* Le haut de l'écran (encoche comprise) est déjà pris par la barre du haut */
+  padding: 28px 20px calc(20px + env(safe-area-inset-bottom));
 }
 
 /* ---------- Barre du haut ---------- */
+/* Hors des écrans, commune à tous : même largeur et mêmes marges qu'un écran */
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  max-width: 440px;
+  margin: 0 auto;
+  padding: calc(16px + env(safe-area-inset-top)) 20px 0;
 }
 
 .brand {
@@ -587,7 +594,8 @@ svg {
 body:not(.has-history) .history { display: none; }
 
 /* Le contenu se décale pour ne pas passer sous la colonne */
-body.has-history .screen { padding-left: calc(var(--rail) + 16px); }
+body.has-history .screen,
+body.has-history .topbar { padding-left: calc(var(--rail) + 16px); }
 
 .history__new {
   display: flex;

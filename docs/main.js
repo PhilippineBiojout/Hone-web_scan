@@ -17,6 +17,8 @@ const CHUNK_SIZE = 256 * 1024; // 256 Ko par morceau
 const frag_status = document.getElementById("fragment_status");
 const frag_status_text = document.getElementById("fragment_status_text");
 const sent_again = document.getElementById("sent-again");
+const sentAgainLabel = document.getElementById("sent-again-label");
+const sentBack = document.getElementById("sent-back");
 const expired_retry = document.getElementById("expired-retry");
 const historyList = document.getElementById("history-list");
 const newDoc = document.getElementById("new-doc");
@@ -306,7 +308,17 @@ sendPhoto.addEventListener("click", () => {
     socket.send(JSON.stringify({ type: "photo-end", id: photoId }));
 });
 
-sent_again.addEventListener("click", () => goHome());
+// « Scanner la page N » : on enchaîne, la caméra s'ouvre directement (sans repasser par Caméra / Importer)
+sent_again.addEventListener("click", () => {
+    withTransition(() => {
+        welcomeScreen.classList.remove("has-photo", "has-page");
+        setScreen("screen-welcome");
+    });
+    startCamera(sent_again); // si l'accès est refusé : l'écran d'erreur, comme depuis l'accueil
+});
+
+// « Retour » : l'accueil, pour importer une photo, rouvrir une page ou changer de document
+sentBack.addEventListener("click", () => goHome());
 
 expired_retry.addEventListener("click", () => {
     goHome();
@@ -381,6 +393,9 @@ async function photoReceived(){
         ? "Elle remplace l'ancienne version de cette page dans ta note."
         : "Elle s'ajoute à la suite de ta note dans Fragment.";
     setRescan(null); // la mise à jour est faite : la prochaine photo repart à la suite
+    // Le bouton pour enchaîner annonce la page suivante (celle-ci n'est pas encore dans doc.pages)
+    const next = send.replace ? nextPage() : Math.max(nextPage(), send.page + 1);
+    sentAgainLabel.textContent = `Scanner la page ${next}`;
 
     const thumb = await send.thumb;
     // Pendant l'attente de la miniature, on a pu passer à un nouveau document : on ne mélange pas

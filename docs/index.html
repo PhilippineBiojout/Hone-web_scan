@@ -24,18 +24,21 @@
     <ol class="history__list" id="history-list"></ol>
   </aside>
 
-  <main class="screen" id="screen-welcome">
+  <!-- La barre du haut est commune à tous les écrans (accueil, envoyé, erreur, expiré) :
+       le bouton Hone et l'état de la connexion restent toujours visibles. Elle est hors
+       des <main>, donc elle ne bouge pas pendant les transitions entre écrans. -->
+  <header class="topbar">
+    <button class="brand" id="home" type="button" aria-label="Hone, retour à l'accueil">
+      <span class="brand__mark" aria-hidden="true"></span>
+      Hone
+    </button>
+    <span class="status" id="fragment_status">
+      <span class="status__dot" aria-hidden="true"></span>
+      <span id="fragment_status_text">Connecté à Fragment</span>
+    </span>
+  </header>
 
-    <header class="topbar">
-      <button class="brand" id="home" type="button" aria-label="Hone, retour à l'accueil">
-        <span class="brand__mark" aria-hidden="true"></span>
-        Hone
-      </button>
-      <span class="status" id="fragment_status">
-        <span class="status__dot" aria-hidden="true"></span>
-        <span id="fragment_status_text">Connecté à Fragment</span>
-      </span>
-    </header>
+  <main class="screen" id="screen-welcome">
 
     <div class="rescan" id="rescan" hidden>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
@@ -177,9 +180,14 @@
     </div>
 
     <footer class="actions">
+      <!-- Enchaîner : la caméra s'ouvre directement pour la page suivante -->
       <button class="btn btn--primary" id="sent-again" type="button">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-        Scanner une autre page
+        <span id="sent-again-label">Scanner une autre page</span>
+      </button>
+      <!-- Ou revenir à l'accueil (Caméra / Importer), sans ouvrir la caméra -->
+      <button class="btn btn--ghost" id="sent-back" type="button">
+        Retour
       </button>
     </footer>
   </main>
