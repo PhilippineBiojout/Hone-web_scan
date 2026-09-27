@@ -606,7 +606,6 @@ async function straighten(photo, coins){
     const bord = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
     let largeur = (bord(hg, hd) + bord(bg, bd)) / 2;
     let hauteur = (bord(hg, bg) + bord(hd, bd)) / 2;
-    // Plafond à 2000 px sur le grand côté : bien lisible, plus rapide, plus léger à envoyer
     const k = Math.min(1, 2000 / Math.max(largeur, hauteur));
     largeur = Math.round(largeur * k);
     hauteur = Math.round(hauteur * k);
@@ -617,4 +616,32 @@ async function straighten(photo, coins){
     }
     // Une erreur d'OpenCV ne doit pas bloquer l'envoi : la photo partira telle quelle
     catch { return null; }
+}
+
+// Synchrone : OpenCV calcule tout de suite, il n'y a rien à attendre
+function cleanUp(canvas){
+    // Déclarées avant le try pour que le finally puisse toutes les libérer
+    let src = null, gris = null, petit = null, noyau = null, fond = null, net = null;
+    try {
+        src = cv.imread(canvas);
+        gris = new cv.Mat(); cv.cvtColor(src, gris, cv.COLOR_RGBA2GRAY);
+
+        petit = new cv.Mat();
+        cv.resize(gris, petit, new cv.Size(Math.round(gris.cols/8),  Math.round(gris.rows/8)), 0, 0, cv.INTER_AREA);
+        noyau = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5,5));
+        cv.dilate(petit, petit, noyau);
+
+        cv.GaussianBlur(petit, petit, new cv.Size(15,15), 0);
+        fond = new cv.Mat(); cv.resize(petit, fond, new cv.Size(gris.cols, gris.rows), 0, 0, cv.INTER_LINEAR);
+        net = new cv.Mat(); cv.divide(gris, fond, net, 255);
+
+        cv.imshow(canvas, net);
+        return canvas;
+    }
+    // Une erreur d'OpenCV : on garde la feuille redressée, juste sans l'effet scan
+    catch { return canvas; }
+    // OpenCV.js ne libère rien tout seul : 6 matrices, dont plusieurs à 2000 px
+    finally {
+        for (const m of [src, gris, petit, noyau, fond, net]) if (m) m.delete();
+    }
 }
