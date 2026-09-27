@@ -62,7 +62,7 @@ Codes de fermeture :
 |---|---|
 | 4000 | le PC est remplacé par une nouvelle connexion |
 | 4404 | session inconnue ou fermée (aucun PC connecté) |
-| 4409 | un téléphone est déjà connecté |
+| 4001 | le téléphone est remplacé par une nouvelle connexion (un autre onglet a pris la session) |
 
 Réponses HTTP du relais : 404 hors de `/session/<id>`, 400 si l'`id` ou le
 rôle est invalide, 426 sans en-tête `Upgrade: websocket`.
