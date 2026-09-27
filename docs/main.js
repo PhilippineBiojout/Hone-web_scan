@@ -116,8 +116,7 @@ function setPreview(source){
         URL.revokeObjectURL(url);
         url = null;
     }
-    // Pas d'image (une page d'un PDF repris) : on cache l'aperçu et on s'arrête là,
-    // sinon la suite remettrait une adresse vide (icône d'image cassée)
+    
     if (source == null){
         preview.hidden = true;
         preview.removeAttribute("src");
@@ -675,6 +674,8 @@ function cleanUp(canvas){
         cv.GaussianBlur(petit, petit, new cv.Size(15,15), 0);
         fond = new cv.Mat(); cv.resize(petit, fond, new cv.Size(gris.cols, gris.rows), 0, 0, cv.INTER_LINEAR);
         net = new cv.Mat(); cv.divide(gris, fond, net, 255);
+        const a = 1.6;
+        net.convertTo(net, -1, a, 255 * (1 - a));
 
         cv.imshow(canvas, net);
         return canvas;
