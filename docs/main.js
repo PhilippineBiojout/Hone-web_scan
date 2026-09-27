@@ -583,3 +583,38 @@ async function detectCorners(photo){
 
 
 }
+
+async function straighten(photo, coins){
+    const s = getScanner();
+    // Pas de coins (étape 2 a renvoyé null) : rien à redresser
+    if (s === null || coins === null){ return null;}
+
+    let bitmap;
+    try {
+        bitmap = await createImageBitmap(photo);
+    }
+    catch{ return null;}
+    const canvas = document.createElement("canvas");
+    // Sans ça, le canvas garde sa taille par défaut (300 × 150) et la photo serait coupée
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, bitmap.width, bitmap.height);
+    bitmap.close();
+
+    // Taille de la feuille à plat : moyenne des bords opposés, sinon elle sortirait étirée
+    const { topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd } = coins;
+    const bord = (a, b) => Math.hypot(b.x - a.x, b.y - a.y);
+    let largeur = (bord(hg, hd) + bord(bg, bd)) / 2;
+    let hauteur = (bord(hg, bg) + bord(hd, bd)) / 2;
+    // Plafond à 2000 px sur le grand côté : bien lisible, plus rapide, plus léger à envoyer
+    const k = Math.min(1, 2000 / Math.max(largeur, hauteur));
+    largeur = Math.round(largeur * k);
+    hauteur = Math.round(hauteur * k);
+
+    // Nos coins en 4ᵉ argument : extractPaper ne recherche pas la feuille une deuxième fois
+    try {
+        return s.extractPaper(canvas, largeur, hauteur, coins);
+    }
+    // Une erreur d'OpenCV ne doit pas bloquer l'envoi : la photo partira telle quelle
+    catch { return null; }
+}
