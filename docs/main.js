@@ -674,7 +674,7 @@ function cleanUp(canvas){
         cv.GaussianBlur(petit, petit, new cv.Size(15,15), 0);
         fond = new cv.Mat(); cv.resize(petit, fond, new cv.Size(gris.cols, gris.rows), 0, 0, cv.INTER_LINEAR);
         net = new cv.Mat(); cv.divide(gris, fond, net, 255);
-        const a = 1.6;
+        const a = 2;
         net.convertTo(net, -1, a, 255 * (1 - a));
 
         cv.imshow(canvas, net);
