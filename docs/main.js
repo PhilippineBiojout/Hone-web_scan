@@ -505,5 +505,81 @@ newDoc.addEventListener("click", () => {
     renderPages();
     goHome();
 });
-
 renderPages();
+
+function scannerReady(){
+    return (typeof cv !== "undefined" && typeof cv.Mat === "function" && typeof jscanify !== "undefined");
+}
+
+
+let scanner = null;
+
+// Le scanner s'il est prêt, sinon null. Null = on envoie la photo telle quelle :
+// le scan ne doit jamais bloquer ni retarder l'envoi (OpenCV peut encore charger).
+function getScanner(){
+    if (!scannerReady()) return null;
+    if (scanner === null) scanner = new jscanify();
+    return scanner;
+}
+
+
+async function detectCorners(photo){
+    const s = getScanner();
+
+    if (s=== null){ return null;}
+    let bitmap;
+    try{
+        bitmap = await createImageBitmap(photo)
+    }
+    catch { return null;}
+    // Un canvas veut une taille en pixels entiers
+    const hauteur = Math.round(800 * bitmap.height / bitmap.width);
+    const largeur = 800;
+    const canvas = document.createElement("canvas");
+    canvas.width = largeur;
+    canvas.height = hauteur;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0, largeur, hauteur);
+    // Lue avant close(), qui la remet à 0
+    const vraieLargeur = bitmap.width;
+    let mat;
+    let contour;
+    let coins;
+    try{
+        mat = cv.imread(canvas);
+        if (mat){
+            contour = s.findPaperContour(mat);
+        }
+        if (contour) {
+            coins = s.getCornerPoints(contour);
+        }
+    }
+    // Une erreur d'OpenCV = pas de feuille trouvée : la photo partira telle quelle
+    catch { return null; }
+    finally{
+        if (contour){contour.delete()};
+        if (mat){mat.delete()};
+        // Dans le finally : libérée même si OpenCV a planté
+        bitmap.close();
+    }
+
+    if (!coins) return null;
+
+    const {topLeftCorner: hg, topRightCorner: hd, bottomLeftCorner: bg, bottomRightCorner: bd} = coins;
+    
+    if(!hg || !hd || !bg || !bd) return null;
+    const surface = Math.hypot(hd.x - hg.x, hd.y - hg.y) * Math.hypot(bg.x - hg.x, bg.y - hg.y);
+    if (surface < 0.2 * largeur * hauteur) return null;
+
+    const f = vraieLargeur / largeur;
+    const agrandir = (p) => ({ x: p.x * f, y: p.y * f });
+
+    return {
+        topLeftCorner : agrandir(hg),
+        topRightCorner: agrandir(hd),
+        bottomLeftCorner: agrandir(bg),
+        bottomRightCorner: agrandir(bd),
+        
+    };
+
+
+}
