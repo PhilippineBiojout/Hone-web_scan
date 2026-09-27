@@ -263,6 +263,9 @@ function connectRelay(){
             showScreen("screen-sent");
             sendPhoto.disabled = false;
         }
+        else if(message.type === "destination"){
+            applyDestination(message.key, message.pages);
+        }
 
     };
     socket.onclose = (event) => {
@@ -372,7 +375,7 @@ function loadDoc(){
     } catch {
         // stockage bloqué ou contenu illisible : on repart d'un document vide
     }
-    return { id: crypto.randomUUID(), pages: [] };
+    return { id: crypto.randomUUID(), key: null, pages: [] };
 }
 
 function saveDoc(){
@@ -524,11 +527,11 @@ rescanCancel.addEventListener("click", () => setRescan(null));
 newDoc.addEventListener("click", () => {
     if (socket?.readyState !== WebSocket.OPEN || pendingPhotoId !== null) return;
     if (doc.pages.length > 0 && !confirm("Commencer un nouveau document ? La prochaine photo ouvrira une nouvelle note, et ces miniatures seront effacées.")) return;
-    doc = { id: crypto.randomUUID(), pages: [] };
+    doc = { id: crypto.randomUUID(), key: doc.key, pages: [] };
     photos.clear();
     // Prévient Fragment tout de suite (il peut fermer la note en cours) ; chaque photo
     // porte de toute façon son `doc`, donc ce message n'est pas indispensable.
-    socket.send(JSON.stringify({ type: "doc-new", doc: doc.id }));
+    socket.send(JSON.stringify({ type: "doc-new", doc: doc.id, key: doc.key }));
     saveDoc();
     renderPages();
     goHome();
@@ -693,3 +696,19 @@ useOriginal.addEventListener("click", () => {
     setPreview(currentPhoto);
     useOriginal.textContent = toOriginal ? "Version scannée" : "Original";
 });
+
+function applyDestination(key, pages){
+    if (key === doc.key){
+        return;
+    }
+
+    doc = { id: crypto.randomUUID(), key, pages: []};
+    for (let p =0; p<pages; p++){
+        doc.pages.push({page: p+1, thumb: null});
+    }
+    photos.clear();
+    saveDoc();
+    renderPages();
+    goHome();
+
+}
