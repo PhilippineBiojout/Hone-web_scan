@@ -349,6 +349,16 @@ svg {
 .has-photo .scanner__paper,
 .has-photo .scanner__beam { display: none; }
 
+/* Pendant le scan (le JS pose .is-scanning), le faisceau balaie la photo de haut en bas,
+   comme dans le viseur de la caméra : on voit que ça travaille. */
+.has-photo.is-scanning .scanner__beam {
+  display: block;
+  z-index: 1;
+  left: 24px;
+  right: 24px;
+  animation: sweep-full 1.4s ease-in-out infinite alternate;
+}
+
 .has-photo .scanner__photo {
   display: block;
   width: 100%;
@@ -748,6 +758,24 @@ body.has-history .topbar { padding-left: calc(var(--rail) + 16px); }
   from { opacity: 0; transform: translateY(20px) scale(0.98); filter: blur(4px); }
 }
 
+/* L'aperçu a son propre nom : quand le JS change son image dans une transition
+   (swapPreview), le navigateur fond l'ancienne dans la nouvelle ET fait glisser la
+   taille du cadre, de la photo brute vers la feuille recadrée. */
+.scanner__photo { view-transition-name: preview; }
+
+::view-transition-group(preview) {
+  animation-duration: 0.45s;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+::view-transition-old(preview),
+::view-transition-new(preview) {
+  animation-duration: 0.45s;
+  /* Les deux images gardent leurs proportions pendant le glissement (pas d'étirement) */
+  height: 100%;
+  object-fit: contain;
+}
+
 /* ---------- Accessibilité ---------- */
 @media (prefers-reduced-motion: reduce) {
   .scanner__beam { animation: none; top: 50%; }
@@ -769,4 +797,8 @@ body.has-history .topbar { padding-left: calc(var(--rail) + 16px); }
   .history__new { transition: none; }
   ::view-transition-old(screen),
   ::view-transition-new(screen) { animation: none; }
+  .has-photo.is-scanning .scanner__beam { animation: none; top: 50%; }
+  ::view-transition-group(preview),
+  ::view-transition-old(preview),
+  ::view-transition-new(preview) { animation: none; }
 }

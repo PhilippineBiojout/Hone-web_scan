@@ -49,6 +49,7 @@ let viewedPage = null;      // la page affichée en grand depuis la colonne, sin
 let pendingSend = null;     // l'envoi en cours : { doc, page, replace, photo, thumb (Promise) }
 let originalPhoto = null; // la photo avant l'ajusteent de jscan
 let scanTicket = 0;
+let reconnectWhenVisible = false; // coupé pendant que l'onglet était caché : on se reconnectera à son retour
 let scannedPhoto = null; // la version scannée de la photo affichée, null si le scan n'a pas réussi
 
 photo.addEventListener("change", () => {
@@ -93,11 +94,15 @@ async function showPhoto(image){
     sendPhoto.disabled = true;
     sendPhotoLabel.textContent = "Scan… ";
     const ticket = ++scanTicket;
+    // Le faisceau du viseur balaie la photo pendant le scan : on voit que ça travaille
+    welcomeScreen.classList.add("is-scanning");
     const scanned = await scanPhoto(image);
     if (ticket !== scanTicket) return;
+    welcomeScreen.classList.remove("is-scanning");
 
     if (scanned !== null){
-        setPreview(scanned);
+        // Fondu + morphing de la photo brute vers la feuille recadrée (View Transitions)
+        swapPreview(scanned);
         currentPhoto = scanned;
         // Le scan a réussi : on propose de revenir à la photo brute
         scannedPhoto = scanned;
@@ -146,6 +151,16 @@ function withTransition(update){
     }
 }
 
+// Change l'image de l'aperçu en fondu, avec un morphing de sa taille : la photo brute se
+// resserre vers la feuille recadrée. On attend que la nouvelle image soit décodée avant
+// que le navigateur en prenne la « photo » de fin, sinon le fondu partirait vers du vide.
+function swapPreview(source){
+    withTransition(async () => {
+        setPreview(source);
+        await preview.decode().catch(() => {});
+    });
+}
+
 // Affiche l'écran `id` et cache les autres (sans animation)
 function setScreen(id){
     document.querySelectorAll(".screen").forEach((screen) => {
@@ -164,6 +179,7 @@ function showScreen(id){
 function goHome({ keepRescan = false } = {}){
     // Un scan encore en cours ne doit pas remettre sa photo dans l'aperçu après notre départ
     ++scanTicket;
+    welcomeScreen.classList.remove("is-scanning"); // le scan abandonné n'éteindra plus son faisceau
     if (!keepRescan) setRescan(null);
     viewedPage = null;
     updateSelection();
@@ -292,10 +308,21 @@ function connectRelay(){
             showScreen("screen-expired");
         }
         else{
-            setTimeout(connectRelay, 2000);
+            // Coupure réseau (ou code inconnu) : on se reconnecte, mais seulement si l'onglet est
+            // visible. Un onglet en arrière-plan (Safari endormi) qui se reconnecterait tout seul
+            // éjecterait l'onglet qu'on est en train d'utiliser (le relais garde le dernier arrivé).
+            setTimeout(reconnectIfVisible, 2000);
         }
     };
 
+}
+
+// Reconnecte tout de suite si l'onglet est visible ; sinon, on attend qu'il le redevienne
+// (le listener « visibilitychange » plus bas s'en charge). Revérifié au moment du rappel :
+// l'onglet a pu passer en arrière-plan pendant les 2 secondes d'attente.
+function reconnectIfVisible(){
+    if (document.visibilityState === "visible") connectRelay();
+    else reconnectWhenVisible = true;
 }
 
 if (sessionId){
@@ -317,6 +344,11 @@ function setFragmentConnected(connected, label = "Fragment non connecté"){
 
 document.addEventListener("visibilitychange", () => {
     if (document.hidden) stopCamera();
+    // L'onglet revient au premier plan après une coupure : c'est lui qu'on utilise, il reprend la main
+    else if (reconnectWhenVisible){
+        reconnectWhenVisible = false;
+        connectRelay();
+    }
 });
 window.addEventListener("pagehide", stopCamera);
 
@@ -506,6 +538,7 @@ function openPage(page){
     if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas d'écran
     // Même raison que dans goHome : le scan en cours ne doit pas écraser la page affichée
     ++scanTicket;
+    welcomeScreen.classList.remove("is-scanning"); // pas de faisceau sur une page déjà envoyée
     if (viewedPage === page && !welcomeScreen.hidden){
         goHome();
         return;
@@ -786,7 +819,7 @@ useOriginal.addEventListener("click", () => {
     if (originalPhoto === null || scannedPhoto === null) return;
     const toOriginal = currentPhoto !== originalPhoto;
     currentPhoto = toOriginal ? originalPhoto : scannedPhoto;
-    setPreview(currentPhoto);
+    swapPreview(currentPhoto); // le même fondu que l'arrivée du scan, dans les deux sens
     useOriginal.textContent = toOriginal ? "Version scannée" : "Original";
 });
 
