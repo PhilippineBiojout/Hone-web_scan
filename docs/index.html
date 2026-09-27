@@ -142,6 +142,10 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></svg>
         Changer de photo
       </button>
+      <!-- Bascule entre la version scannée et la photo brute ; caché tant que le scan n'a pas réussi -->
+      <button class="btn btn--ghost when-photo" id="use-original" type="button" hidden>
+        Original
+      </button>
 
       <!-- Page déjà envoyée : on la reprend en photo (elle remplacera cette page) ou on ferme -->
       <button class="btn btn--primary when-page" id="update-page" type="button">

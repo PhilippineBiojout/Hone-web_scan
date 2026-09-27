@@ -13,6 +13,7 @@ const authorization = document.getElementById("allow-camera");
 const RELAY_URL = "wss://hone-relay.lasky.workers.dev";
 const sendPhoto = document.getElementById("send-photo");
 const sendPhotoLabel = document.getElementById("send-photo-label");
+const useOriginal = document.getElementById("use-original");
 const CHUNK_SIZE = 256 * 1024; // 256 Ko par morceau
 const frag_status = document.getElementById("fragment_status");
 const frag_status_text = document.getElementById("fragment_status_text");
@@ -35,6 +36,7 @@ const DOC_KEY = `hone-doc:${sessionId}`; // un document par session Fragment (su
 const THUMB_WIDTH = 120; // px : assez pour une miniature nette, quelques Ko seulement
 
 
+
 let url = null;
 let stream = null;
 let socket = null;
@@ -45,7 +47,9 @@ const photos = new Map();   // page → la photo complète (Blob), en mémoire s
 let rescanPage = null;      // la page qu'on est en train de remplacer, sinon null (= on ajoute une page)
 let viewedPage = null;      // la page affichée en grand depuis la colonne, sinon null
 let pendingSend = null;     // l'envoi en cours : { doc, page, replace, photo, thumb (Promise) }
-
+let originalPhoto = null; // la photo avant l'ajusteent de jscan
+let scanTicket = 0;
+let scannedPhoto = null; // la version scannée de la photo affichée, null si le scan n'a pas réussi
 
 photo.addEventListener("change", () => {
     const file = photo.files[0];
@@ -71,7 +75,7 @@ photo.addEventListener("change", () => {
 });
 
 // Affiche une image (fichier importé ou photo prise) dans le viseur
-function showPhoto(image){
+async function showPhoto(image){
     setPreview(image);
     // Une nouvelle photo, pas une page déjà envoyée : boutons « Envoyer / Changer de photo »
     welcomeScreen.classList.remove("has-page");
@@ -82,6 +86,26 @@ function showPhoto(image){
     currentPhoto = image;
     // « Ajouter la page 3 » ou « Remplacer la page 2 » : on voit où la photo va atterrir
     sendPhotoLabel.textContent = sendLabel();
+    originalPhoto = image;
+    // Nouvelle photo : pas encore de version scannée, donc rien à basculer
+    scannedPhoto = null;
+    useOriginal.hidden = true;
+    sendPhoto.disabled = true;
+    sendPhotoLabel.textContent = "Scan… ";
+    const ticket = ++scanTicket;
+    const scanned = await scanPhoto(image);
+    if (ticket !== scanTicket) return;
+
+    if (scanned !== null){
+        setPreview(scanned);
+        currentPhoto = scanned;
+        // Le scan a réussi : on propose de revenir à la photo brute
+        scannedPhoto = scanned;
+        useOriginal.textContent = "Original";
+        useOriginal.hidden = false;
+    }
+    sendPhotoLabel.textContent = sendLabel();
+    sendPhoto.disabled = socket?.readyState!==WebSocket.OPEN;
 }
 
 // Met une image dans le viseur : un Blob (photo) ou une URL (miniature enregistrée).
@@ -129,6 +153,8 @@ function showScreen(id){
 // s'ajoutera à la suite. `keepRescan` la garde (« Changer de photo » pendant
 // une mise à jour : on reprend la photo, mais toujours pour la même page).
 function goHome({ keepRescan = false } = {}){
+    // Un scan encore en cours ne doit pas remettre sa photo dans l'aperçu après notre départ
+    ++scanTicket;
     if (!keepRescan) setRescan(null);
     viewedPage = null;
     updateSelection();
@@ -460,6 +486,8 @@ function setRescan(page){
 // La toucher à nouveau referme l'affichage.
 function openPage(page){
     if (pendingPhotoId !== null) return; // un envoi est en cours : on ne change pas d'écran
+    // Même raison que dans goHome : le scan en cours ne doit pas écraser la page affichée
+    ++scanTicket;
     if (viewedPage === page && !welcomeScreen.hidden){
         goHome();
         return;
@@ -645,3 +673,23 @@ function cleanUp(canvas){
         for (const m of [src, gris, petit, noyau, fond, net]) if (m) m.delete();
     }
 }
+
+async function scanPhoto(photo){
+    const coins = await detectCorners(photo);
+    if (coins === null) return null;
+    const canvas = await straighten(photo, coins);
+    if (canvas === null) return null;
+    const cleanedCanvas = cleanUp(canvas);
+
+    return new Promise((resolve) => cleanedCanvas.toBlob(resolve, "image/jpeg", 0.85));
+
+}
+
+// « Original » ↔ « Version scannée » : c'est la photo affichée qui partira à l'envoi
+useOriginal.addEventListener("click", () => {
+    if (originalPhoto === null || scannedPhoto === null) return;
+    const toOriginal = currentPhoto !== originalPhoto;
+    currentPhoto = toOriginal ? originalPhoto : scannedPhoto;
+    setPreview(currentPhoto);
+    useOriginal.textContent = toOriginal ? "Version scannée" : "Original";
+});
